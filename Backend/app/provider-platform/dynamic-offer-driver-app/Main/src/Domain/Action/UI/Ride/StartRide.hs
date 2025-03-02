@@ -25,6 +25,7 @@ where
 
 import Data.Maybe (listToMaybe)
 import qualified Data.Text as Text
+import qualified Domain.Action.Internal.StopDetection as StopDetection
 import qualified Domain.Action.UI.Ride.StartRide.Internal as SInternal
 import qualified Domain.Types as DTC
 import qualified Domain.Types.Booking as SRB
@@ -110,9 +111,10 @@ driverStartRide ::
   DriverStartRideReq ->
   m APISuccess.APISuccess
 driverStartRide handle rideId req =
-  withLogTag ("requestorId-" <> req.requestor.id.getId)
-    . startRide handle rideId
-    $ DriverReq req
+  withLogTag ("requestorId-" <> req.requestor.id.getId) $ do
+    result <- startRide handle rideId (DriverReq req)
+    void $ Redis.del (StopDetection.mkStopCountRedisKey rideId.getId)
+    pure result
 
 dashboardStartRide ::
   (StartRideFlow m r, SchedulerFlow r) =>
