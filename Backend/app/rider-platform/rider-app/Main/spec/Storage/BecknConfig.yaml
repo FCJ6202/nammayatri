@@ -134,6 +134,9 @@ IntegratedBPPConfig:
     platformType: "'APPLICATION'"
 
   queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
     findByDomainAndCityAndVehicleCategory:
       kvFunction: findOneWithKV
       where:
