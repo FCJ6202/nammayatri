@@ -3486,7 +3486,6 @@ type MeterRideScreenState = {
 
 type MeterRideScreenData = {
   distance :: Number,
-  timeMin :: Int,
   timeSec :: Int,
   destinationAddress :: String,
   destinationLat :: Number,
@@ -3502,6 +3501,7 @@ type MeterRideScreenProps = {
   sliderDefVal :: Int,
   incrementUnit :: Int,
   sliderVal :: Int,
-  ratePerKM :: Int,
-  isMeterRideStarted :: Boolean
+  ratePerKM :: Number,
+  isMeterRideStarted :: Boolean,
+  confirmMeterRideStop :: Boolean
 }

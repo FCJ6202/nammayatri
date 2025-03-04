@@ -26,3 +26,6 @@ meterRideScreen = do
     GoToEnterDestination state -> do
       modifyScreenState $ MeterRideScreenStateType (\_ -> state)
       App.BackT $ App.BackPoint <$> (pure $ ENTER_DESTINATION state)
+    GoToDriverProfile state -> do
+      modifyScreenState $ MeterRideScreenStateType (\_ -> state)
+      App.BackT $ App.BackPoint <$> (pure $ GO_TO_DRIVER_PROFILE state)

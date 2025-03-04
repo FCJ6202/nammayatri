@@ -4781,3 +4781,4 @@ meterRideScreenFlow = do
   case action of
     MRSO.ENTER_DESTINATION state -> meterScreenFlow
     MRSO.GO_BACK -> homeScreenFlow
+    MRSO.GO_TO_DRIVER_PROFILE state -> driverProfileFlow
