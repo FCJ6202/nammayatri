@@ -328,7 +328,7 @@ data BookingData = BookingData
 
 data UnifiedTicketQR = UnifiedTicketQR
   { version :: Text,
-    _type :: QRType,
+    _type :: DJ.QRType,
     txnId :: Text,
     createdAt :: UTCTime,
     cmrl :: [BookingData],
