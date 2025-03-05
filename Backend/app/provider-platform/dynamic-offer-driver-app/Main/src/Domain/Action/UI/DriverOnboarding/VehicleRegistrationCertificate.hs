@@ -439,6 +439,7 @@ onVerifyRCHandler person rcVerificationResponse mbVehicleCategory mbAirCondition
             vehicleSeatBelts = mbVehicleSeatBelts,
             rejectReason = Nothing,
             createdAt = now,
+            unencryptedCertificateNumber = input.registrationNumber,
             updatedAt = now
           }
     initiateRCCreation mVehicleRC now mbFleetOwnerId = do

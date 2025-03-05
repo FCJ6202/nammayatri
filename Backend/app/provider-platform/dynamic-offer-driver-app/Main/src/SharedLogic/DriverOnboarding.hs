@@ -388,6 +388,7 @@ createRC merchantId merchantOperatingCityId input rcconfigs id now certificateNu
       vehicleModelYear = input.vehicleModelYear,
       rejectReason = Nothing,
       createdAt = now,
+      unencryptedCertificateNumber = input.registrationNumber,
       updatedAt = now
     }
 

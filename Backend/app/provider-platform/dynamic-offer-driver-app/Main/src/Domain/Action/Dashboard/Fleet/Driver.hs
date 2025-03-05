@@ -311,10 +311,8 @@ getDriverFleetGetAllVehicle ::
 getDriverFleetGetAllVehicle merchantShortId _ fleetOwnerId mbLimit mbOffset mbRegNumberString = do
   let limit = fromMaybe 10 mbLimit
       offset = fromMaybe 0 mbOffset
-  mbRegNumberStringHash <- mapM getDbHash mbRegNumberString
-  logDebug $ "reg number hash: " <> show mbRegNumberStringHash <> " param-string: " <> show mbRegNumberString
   merchant <- findMerchantByShortId merchantShortId
-  vehicleList <- RCQuery.findAllByFleetOwnerIdAndSearchString (toInteger limit) (toInteger offset) merchant.id fleetOwnerId mbRegNumberStringHash
+  vehicleList <- RCQuery.findAllByFleetOwnerIdAndSearchString (toInteger limit) (toInteger offset) merchant.id fleetOwnerId mbRegNumberString
   vehicles <- traverse convertToVehicleAPIEntity vehicleList
   return $ Common.ListVehicleRes vehicles
 
@@ -626,13 +624,13 @@ calculateTimeDifference diffTime = Common.TotalDuration {..}
 
 getListOfVehicles :: Maybe Text -> Text -> Maybe Int -> Maybe Int -> Maybe Common.FleetVehicleStatus -> Id DM.Merchant -> Flow [VehicleRegistrationCertificate]
 getListOfVehicles mbVehicleNo fleetOwnerId mbLimit mbOffset mbStatus merchantId = do
+  let limit = fromIntegral $ min 10 $ fromMaybe 5 mbLimit
+      offset = fromIntegral $ fromMaybe 0 mbOffset
   case mbVehicleNo of
     Just vehicleNo -> do
-      vehicleInfo <- RCQuery.findLastVehicleRCFleet' vehicleNo fleetOwnerId
-      pure $ maybeToList vehicleInfo
+      vehicleInfo <- RCQuery.partialFindLastVehicleRCFleet vehicleNo fleetOwnerId limit offset
+      pure $ vehicleInfo
     Nothing -> do
-      let limit = fromIntegral $ min 10 $ fromMaybe 5 mbLimit
-          offset = fromIntegral $ fromMaybe 0 mbOffset
       case mbStatus of
         Just Common.InActive -> RCQuery.findAllInactiveRCForFleet fleetOwnerId limit offset merchantId
         Just Common.Pending -> RCQuery.findAllRCByStatusForFleet fleetOwnerId (castFleetVehicleStatus mbStatus) Nothing limit offset merchantId
