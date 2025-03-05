@@ -1854,3 +1854,4 @@ getProxy str = case str of
   SEARCH -> \a -> a @~ search
   BUS__ -> \a -> a @~ bus__
   DRIVER_UNSUBSCRIBED -> \a -> a @~ driver_unsubscribed
+  OUT_OF_RIDES arg1 arg2 -> \a -> (a @~ out_of_rides)  arg1 arg2
