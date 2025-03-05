@@ -53,6 +53,7 @@ import qualified Storage.Queries.Route as QRoute
 import qualified Storage.Queries.Station as QStation
 import qualified Storage.Queries.Transformers.Booking as QTB
 import Tools.Metrics.BAPMetrics.Types
+import qualified Tools.SharedRedisKeys as SharedRedisKeys
 import TransactionLogs.Types
 
 type SearchRequestFlow m r c =
@@ -221,7 +222,8 @@ data LegInfo = LegInfo
     merchantOperatingCityId :: Id DMOC.MerchantOperatingCity,
     personId :: Id DP.Person,
     actualDistance :: Maybe Distance,
-    totalFare :: Maybe Kernel.Types.Common.Price
+    totalFare :: Maybe Kernel.Types.Common.Price,
+    batchConfig :: Maybe SharedRedisKeys.BatchConfig
   }
   deriving stock (Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -399,6 +401,7 @@ mkLegInfoFromBookingAndRide booking mRide = do
   toLocation <- QTB.getToLocation booking.bookingDetails & fromMaybeM (InvalidRequest "To Location not found")
   let skipBooking = fromMaybe False booking.isSkipped
   (status, _) <- getTaxiLegStatusFromBooking booking mRide
+  batchConfig <- SharedRedisKeys.getBatchConfig booking.id.getId
   return $
     LegInfo
       { skipBooking,
@@ -430,7 +433,8 @@ mkLegInfoFromBookingAndRide booking mRide = do
                 vehicleIconUrl = booking.vehicleIconUrl
               },
         actualDistance = mRide >>= (.traveledDistance),
-        totalFare = mRide >>= (.fare)
+        totalFare = mRide >>= (.fare),
+        batchConfig
       }
 
 mkLegInfoFromSearchRequest :: (CacheFlow m r, EncFlow m r, EsqDBFlow m r, MonadFlow m) => DSR.SearchRequest -> m LegInfo
@@ -443,6 +447,7 @@ mkLegInfoFromSearchRequest DSR.SearchRequest {..} = do
         return $ (mbEst <&> (.totalFareRange), mbEst <&> (.status), mbEst)
       Nothing -> return (Nothing, Nothing, Nothing)
   toLocation' <- toLocation & fromMaybeM (InvalidRequest "To location not found") -- make it proper
+  batchConfig <- SharedRedisKeys.getBatchConfig id.getId
   return $
     LegInfo
       { skipBooking = journeyLegInfo'.skipBooking,
@@ -474,7 +479,8 @@ mkLegInfoFromSearchRequest DSR.SearchRequest {..} = do
                 vehicleIconUrl = Nothing
               },
         actualDistance = Nothing,
-        totalFare = Nothing
+        totalFare = Nothing,
+        batchConfig
       }
 
 getWalkLegStatusFromWalkLeg :: DWalkLeg.WalkLegMultimodal -> JourneySearchData -> JourneyLegStatus
@@ -519,7 +525,8 @@ mkWalkLegInfoFromWalkLegData legData@DWalkLeg.WalkLegMultimodal {..} = do
         status = getWalkLegStatusFromWalkLeg legData journeyLegInfo',
         legExtraInfo = Walk $ WalkLegExtraInfo {origin = fromLocation, destination = toLocation'},
         actualDistance = estimatedDistance,
-        totalFare = Nothing
+        totalFare = Nothing,
+        batchConfig = Nothing
       }
 
 getFRFSLegStatusFromBooking :: DFRFSBooking.FRFSTicketBooking -> JourneyLegStatus
@@ -574,7 +581,8 @@ mkLegInfoFromFrfsBooking booking distance duration = do
         status = legStatus,
         legExtraInfo = legExtraInfo,
         actualDistance = distance,
-        totalFare = booking.finalPrice
+        totalFare = booking.finalPrice,
+        batchConfig = Nothing
       }
   where
     mkLegExtraInfo qrDataList journeyRouteDetails' metroRouteInfo' subwayRouteInfo' = do
@@ -727,7 +735,8 @@ mkLegInfoFromFrfsSearchRequest FRFSSR.FRFSSearch {..} fallbackFare distance dura
         status = fromMaybe InPlan journeyLegStatus,
         legExtraInfo = legExtraInfo,
         actualDistance = Nothing,
-        totalFare = Nothing
+        totalFare = Nothing,
+        batchConfig = Nothing
       }
   where
     mkLegExtraInfo metroRouteInfo' subwayRouteInfo' = do
