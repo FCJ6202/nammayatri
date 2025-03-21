@@ -491,6 +491,30 @@ apis:
       migrate:
         userActionType: ApiAuth DRIVER_OFFER_BPP_MANAGEMENT DRIVERS BULK_SERVICE_UPDATE
 
+  - GET: # DriverStatsAPI
+      endpoint: /stats
+      auth: ApiAuthV2
+      query:
+        - day: Day
+        - entityId: Id Driver
+      request:
+        type: DriverStatReq
+      response:
+        type: DriverStatsRes
+      migrate:
+        userActionType: ApiAuth DRIVER_OFFER_BPP_MANAGEMENT DRIVERS STATS
+      helperApi:
+        - GET:
+            endpoint: /stats
+            auth: ApiAuthV2
+            query:
+              - day: Day
+              - entityId: Id Driver
+            request:
+              type: DriverStatReq
+            response:
+              type: DriverStatsRes
+
 types:
   DriverListRes:
     - totalItems: Int # for backward compatibility
@@ -680,6 +704,11 @@ types:
     - driverIds : [Text]
     - serviceNames : [ServiceNames]
     - derive: "'HideSecrets"
+  DriverStatsRes:
+    - numDriversOnboarded: Int
+    - numFleetsOnboarded: Int
+  DriverStatReq:
+    - requestedPersonId: Text
 
 extraOperations:
   - EXTRA_API_TYPES_FILE

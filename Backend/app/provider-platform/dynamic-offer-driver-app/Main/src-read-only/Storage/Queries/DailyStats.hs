@@ -111,6 +111,8 @@ updateByPrimaryKey (Domain.Types.DailyStats.DailyStats {..}) = do
       Se.Set Beam.merchantId (Kernel.Types.Id.getId <$> merchantId),
       Se.Set Beam.merchantLocalDate merchantLocalDate,
       Se.Set Beam.merchantOperatingCityId (Kernel.Types.Id.getId <$> merchantOperatingCityId),
+      Se.Set Beam.numDriversOnboarded (Kernel.Prelude.Just numDriversOnboarded),
+      Se.Set Beam.numFleetsOnboarded (Kernel.Prelude.Just numFleetsOnboarded),
       Se.Set Beam.numRides numRides,
       Se.Set Beam.payoutOrderId payoutOrderId,
       Se.Set Beam.payoutOrderStatus payoutOrderStatus,

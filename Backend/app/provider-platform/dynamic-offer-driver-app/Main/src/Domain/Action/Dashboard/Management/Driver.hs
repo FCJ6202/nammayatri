@@ -52,6 +52,7 @@ module Domain.Action.Dashboard.Management.Driver
     postDriverDriverDataDecryption,
     getDriverPanAadharSelfieDetailsList,
     postDriverBulkSubscriptionServiceUpdate,
+    getDriverStats,
   )
 where
 
@@ -130,10 +131,12 @@ import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
 import qualified Storage.CachedQueries.PlanExtra as CQP
 import qualified Storage.CachedQueries.VehicleServiceTier as CQVST
 import qualified Storage.Queries.AadhaarCard as QAadhaarCard
+import qualified Storage.Queries.DailyStats as QDailyStats
 import qualified Storage.Queries.DriverInformation as QDriverInfo
 import qualified Storage.Queries.DriverLicense as QDriverLicense
 import qualified Storage.Queries.DriverPanCard as QPanCard
 import qualified Storage.Queries.DriverPlan as QDP
+import qualified Storage.Queries.DriverStats as QDriverStats
 import qualified Storage.Queries.HyperVergeSdkLogs as QSdkLogs
 import qualified Storage.Queries.Image as QImage
 import qualified Storage.Queries.Person as QPerson
@@ -1108,3 +1111,25 @@ postDriverBulkSubscriptionServiceUpdate merchantShortId _opCity req = do
   let services = nub $ map DCommon.mapServiceName (req.serviceNames <> [Common.YATRI_SUBSCRIPTION])
   QDriverInfo.updateServicesEnabled req.driverIds services
   return Success
+
+getDriverStats :: ShortId DM.Merchant -> Context.City -> Maybe Day -> Maybe (Id Common.Driver) -> Common.DriverStatReq -> Flow Common.DriverStatsRes
+getDriverStats merchantShortId opCity mbDay mbDriverId req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Nothing merchant (Just opCity)
+
+  whenJust mbDriverId $ \driverId -> do
+    let personId = cast @Common.Driver @DP.Person driverId
+    driver <- QPerson.findById personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
+    unless (merchant.id == driver.merchantId && merchantOpCityId == driver.merchantOperatingCityId) $
+      throwError (PersonDoesNotExist personId.getId)
+
+  let personId = cast @Common.Driver @DP.Person $ fromMaybe (Id req.requestedPersonId) mbDriverId
+  (numDriversOnboarded, numFleetsOnboarded) <- findOnboardedDriversOrFleets personId mbDay
+  return $ Common.DriverStatsRes {..}
+  where
+    findOnboardedDriversOrFleets personId Nothing = do
+      stats <- B.runInReplica $ QDriverStats.findByPrimaryKey personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
+      return (stats.numDriversOnboarded, stats.numFleetsOnboarded)
+    findOnboardedDriversOrFleets personId (Just day) = do
+      stats <- B.runInReplica $ QDailyStats.findByDriverIdAndDate personId day >>= fromMaybeM (PersonDoesNotExist personId.getId)
+      return (stats.numDriversOnboarded, stats.numFleetsOnboarded)
