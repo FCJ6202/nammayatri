@@ -165,6 +165,7 @@ library
       Domain.Action.Dashboard.RideBooking.Driver
       Domain.Action.Dashboard.RideBooking.DriverRegistration
       Domain.Action.Dashboard.RideBooking.Maps
+      Domain.Action.Dashboard.RideBooking.MeterRide
       Domain.Action.Dashboard.RideBooking.Ride
       Domain.Action.Dashboard.RideBooking.Volunteer
       Domain.Action.Internal.Auth
@@ -553,6 +554,7 @@ library
       Storage.Queries.Feedback.FeedbackBadge
       Storage.Queries.Feedback.FeedbackForm
       Storage.Queries.FeedbackExtra
+      Storage.Queries.FleetBadgeExtra
       Storage.Queries.FleetDriverAssociationExtra
       Storage.Queries.FleetRCAssociationExtra
       Storage.Queries.Geometry
@@ -690,6 +692,7 @@ library
       API.Action.Dashboard.RideBooking.Driver
       API.Action.Dashboard.RideBooking.DriverRegistration
       API.Action.Dashboard.RideBooking.Maps
+      API.Action.Dashboard.RideBooking.MeterRide
       API.Action.Dashboard.RideBooking.Ride
       API.Action.Dashboard.RideBooking.Volunteer
       API.Action.UI.Cac
@@ -725,9 +728,11 @@ library
       API.Types.Dashboard.RideBooking.Endpoints.Driver
       API.Types.Dashboard.RideBooking.Endpoints.DriverRegistration
       API.Types.Dashboard.RideBooking.Endpoints.Maps
+      API.Types.Dashboard.RideBooking.Endpoints.MeterRide
       API.Types.Dashboard.RideBooking.Endpoints.Ride
       API.Types.Dashboard.RideBooking.Endpoints.Volunteer
       API.Types.Dashboard.RideBooking.Maps
+      API.Types.Dashboard.RideBooking.MeterRide
       API.Types.Dashboard.RideBooking.Ride
       API.Types.Dashboard.RideBooking.Volunteer
       API.Types.UI.DemandHotspots
@@ -794,6 +799,7 @@ library
       Domain.Types.Exophone
       Domain.Types.FareProduct
       Domain.Types.Feedback
+      Domain.Types.FleetBadge
       Domain.Types.FleetConfig
       Domain.Types.FleetDriverAssociation
       Domain.Types.FleetOperatorAssociation
@@ -933,6 +939,7 @@ library
       Storage.Beam.Exophone
       Storage.Beam.FareProduct
       Storage.Beam.Feedback
+      Storage.Beam.FleetBadge
       Storage.Beam.FleetConfig
       Storage.Beam.FleetDriverAssociation
       Storage.Beam.FleetOperatorAssociation
@@ -1075,6 +1082,7 @@ library
       Storage.Queries.Exophone
       Storage.Queries.FareProduct
       Storage.Queries.Feedback
+      Storage.Queries.FleetBadge
       Storage.Queries.FleetConfig
       Storage.Queries.FleetDriverAssociation
       Storage.Queries.FleetOperatorAssociation
@@ -1145,6 +1153,7 @@ library
       Storage.Queries.OrphanInstances.Exophone
       Storage.Queries.OrphanInstances.FareProduct
       Storage.Queries.OrphanInstances.Feedback
+      Storage.Queries.OrphanInstances.FleetBadge
       Storage.Queries.OrphanInstances.FleetDriverAssociation
       Storage.Queries.OrphanInstances.FleetOperatorAssociation
       Storage.Queries.OrphanInstances.FleetRCAssociation

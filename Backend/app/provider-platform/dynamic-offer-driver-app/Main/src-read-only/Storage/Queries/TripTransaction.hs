@@ -26,7 +26,7 @@ create = createWithKV
 createMany :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => ([Domain.Types.TripTransaction.TripTransaction] -> m ())
 createMany = traverse_ create
 
-findAllTripTransactionByDriverId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Types.Id.Id Domain.Types.Person.Person -> m [Domain.Types.TripTransaction.TripTransaction])
+findAllTripTransactionByDriverId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Types.Id.Id Domain.Types.Person.Person -> m ([Domain.Types.TripTransaction.TripTransaction]))
 findAllTripTransactionByDriverId driverId = do findAllWithKV [Se.Is Beam.driverId $ Se.Eq (Kernel.Types.Id.getId driverId)]
 
 findByTransactionId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Types.Id.Id Domain.Types.TripTransaction.TripTransaction -> m (Maybe Domain.Types.TripTransaction.TripTransaction))
@@ -84,6 +84,7 @@ updateByPrimaryKey (Domain.Types.TripTransaction.TripTransaction {..}) = do
       Se.Set Beam.createdAt createdAt,
       Se.Set Beam.deviationCount deviationCount,
       Se.Set Beam.driverId (Kernel.Types.Id.getId driverId),
+      Se.Set Beam.driverName driverName,
       Se.Set Beam.endLocationLat (Kernel.Prelude.fmap (.lat) endLocation),
       Se.Set Beam.endLocationLon (Kernel.Prelude.fmap (.lon) endLocation),
       Se.Set Beam.endRideApprovalRequestId (Kernel.Types.Id.getId <$> endRideApprovalRequestId),
