@@ -134,9 +134,12 @@ import qualified Storage.Queries.AadhaarCard as QAadhaarCard
 import qualified Storage.Queries.DailyStats as QDailyStats
 import qualified Storage.Queries.DriverInformation as QDriverInfo
 import qualified Storage.Queries.DriverLicense as QDriverLicense
+import qualified Storage.Queries.DriverOperatorAssociation as QDriverOperator
 import qualified Storage.Queries.DriverPanCard as QPanCard
 import qualified Storage.Queries.DriverPlan as QDP
 import qualified Storage.Queries.DriverStats as QDriverStats
+import qualified Storage.Queries.FleetDriverAssociation as QFleetDriver
+import qualified Storage.Queries.FleetOperatorAssociation as QFleetOperator
 import qualified Storage.Queries.HyperVergeSdkLogs as QSdkLogs
 import qualified Storage.Queries.Image as QImage
 import qualified Storage.Queries.Person as QPerson
@@ -1112,24 +1115,77 @@ postDriverBulkSubscriptionServiceUpdate merchantShortId _opCity req = do
   QDriverInfo.updateServicesEnabled req.driverIds services
   return Success
 
-getDriverStats :: ShortId DM.Merchant -> Context.City -> Maybe Day -> Maybe (Id Common.Driver) -> Common.DriverStatReq -> Flow Common.DriverStatsRes
-getDriverStats merchantShortId opCity mbDay mbDriverId req = do
+getDriverStats :: ShortId DM.Merchant -> Context.City -> Maybe (Id Common.Driver) -> Maybe Day -> Maybe Day -> Common.DriverStatReq -> Flow Common.DriverStatsRes
+getDriverStats merchantShortId opCity mbEntityId mbFromDate mbToDate req = do
   merchant <- findMerchantByShortId merchantShortId
   merchantOpCityId <- CQMOC.getMerchantOpCityId Nothing merchant (Just opCity)
 
-  whenJust mbDriverId $ \driverId -> do
-    let personId = cast @Common.Driver @DP.Person driverId
-    driver <- QPerson.findById personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
-    unless (merchant.id == driver.merchantId && merchantOpCityId == driver.merchantOperatingCityId) $
-      throwError (PersonDoesNotExist personId.getId)
+  whenJust mbFromDate $ \fromDate ->
+    whenJust mbToDate $ \toDate ->
+      unless (toDate >= fromDate) $ throwError (InvalidRequest "toDate must be greater than or equal to fromDate")
 
-  let personId = cast @Common.Driver @DP.Person $ fromMaybe (Id req.requestedPersonId) mbDriverId
-  (numDriversOnboarded, numFleetsOnboarded) <- findOnboardedDriversOrFleets personId mbDay
+  whenJust mbEntityId $ \e_Id -> do
+    let entityId = cast @Common.Driver @DP.Person e_Id
+    let requestedEntityId = Id req.requestedEntityId
+    entities <- QPerson.findAllByPersonIds [requestedEntityId.getId, entityId.getId]
+    when (null entities) $ throwError (PersonDoesNotExist (requestedEntityId.getId <> " and " <> entityId.getId))
+    isValid <- validatePersonAccessAndAssociation merchant.id merchantOpCityId entities
+    unless isValid $ throwError (InternalError "Entity does not have access to this entity data")
+
+  let personId = cast @Common.Driver @DP.Person $ fromMaybe (Id req.requestedEntityId) mbEntityId
+  (numDriversOnboarded, numFleetsOnboarded) <- findOnboardedDriversOrFleets personId mbFromDate mbToDate
   return $ Common.DriverStatsRes {..}
   where
-    findOnboardedDriversOrFleets personId Nothing = do
-      stats <- B.runInReplica $ QDriverStats.findByPrimaryKey personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
-      return (stats.numDriversOnboarded, stats.numFleetsOnboarded)
-    findOnboardedDriversOrFleets personId (Just day) = do
-      stats <- B.runInReplica $ QDailyStats.findByDriverIdAndDate personId day >>= fromMaybeM (PersonDoesNotExist personId.getId)
-      return (stats.numDriversOnboarded, stats.numFleetsOnboarded)
+    findOnboardedDriversOrFleets :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => Id DP.Person -> Maybe Day -> Maybe Day -> m (Int, Int)
+    findOnboardedDriversOrFleets personId maybeFrom maybeTo = do
+      now <- getCurrentTime
+      let currentDay = utctDay now
+          toDate = fromMaybe currentDay maybeTo
+          fromDate = fromMaybe (addDays (-30) toDate) maybeFrom
+
+      case (maybeFrom, maybeTo) of
+        (Nothing, Nothing) -> do
+          stats <- B.runInReplica $ QDriverStats.findByPrimaryKey personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
+          return (stats.numDriversOnboarded, stats.numFleetsOnboarded)
+        _ -> do
+          fromStats <- B.runInReplica $ QDailyStats.findByDriverIdAndDate personId fromDate >>= fromMaybeM (InternalError ("Date not found " <> show fromDate <> " for entity " <> show personId.getId))
+          toStats <- B.runInReplica $ QDailyStats.findByDriverIdAndDate personId toDate >>= fromMaybeM (InternalError ("Date not found" <> show toDate <> "for entity " <> show personId.getId))
+          return (toStats.numDriversOnboarded - fromStats.numDriversOnboarded, toStats.numFleetsOnboarded - fromStats.numFleetsOnboarded)
+
+    isPersonExictInMerchantAndOpCity :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => DP.Person -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> m Bool
+    isPersonExictInMerchantAndOpCity personDetails merchantId merchantOpCityId = do
+      return (personDetails.merchantId == merchantId && personDetails.merchantOperatingCityId == merchantOpCityId)
+
+    isAssociationBetweenTwoPerson :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => DP.Person -> DP.Person -> m Bool
+    isAssociationBetweenTwoPerson requestedPersonDetails personDetails = do
+      case (requestedPersonDetails.role, personDetails.role) of
+        (DP.OPERATOR, DP.DRIVER) -> checkDriverOperatorAssociation requestedPersonDetails.id.getId personDetails.id
+        (DP.OPERATOR, DP.FLEET_OWNER) -> checkFleetOperatorAssociation requestedPersonDetails.id.getId personDetails.id.getId
+        (DP.FLEET_OWNER, DP.DRIVER) -> checkFleetDriverAssociation requestedPersonDetails.id.getId personDetails.id
+        _ -> return False
+      where
+        checkFleetDriverAssociation fleetId driverId = do
+          mbAssoc <- QFleetDriver.findByFleetIdAndDriverId fleetId driverId True
+          return $ isJust mbAssoc
+
+        checkFleetOperatorAssociation fleetId operatorId = do
+          mbAssoc <- QFleetOperator.findByFleetIdAndOperatorId fleetId operatorId True
+          return $ isJust mbAssoc
+
+        checkDriverOperatorAssociation operatorId driverId = do
+          mbAssoc <- QDriverOperator.findByDriverIdAndOperatorId driverId operatorId True
+          return $ isJust mbAssoc
+
+    validatePersonAccessAndAssociation ::
+      (EsqDBFlow m r, MonadFlow m, CacheFlow m r) =>
+      Id DM.Merchant ->
+      Id DMOC.MerchantOperatingCity ->
+      [DP.Person] ->
+      m Bool
+    validatePersonAccessAndAssociation merchantId merchantOpCityId [requestedPerson, person] = do
+      isRequestedPersonValid <- isPersonExictInMerchantAndOpCity requestedPerson merchantId merchantOpCityId
+      isPersonValid <- isPersonExictInMerchantAndOpCity person merchantId merchantOpCityId
+      unless isRequestedPersonValid $ throwError (PersonDoesNotExist requestedPerson.id.getId)
+      unless isPersonValid $ throwError (PersonDoesNotExist person.id.getId)
+      isAssociationBetweenTwoPerson requestedPerson person
+    validatePersonAccessAndAssociation _ _ _ = return False

@@ -147,7 +147,7 @@ data DriverLocationRes = DriverLocationRes {driverLocationsNotFound :: Kernel.Pr
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
-data DriverStatReq = DriverStatReq {requestedPersonId :: Kernel.Prelude.Text}
+data DriverStatReq = DriverStatReq {requestedEntityId :: Kernel.Prelude.Text}
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
@@ -529,17 +529,20 @@ type GetDriverPanAadharSelfieDetailsList =
 type PostDriverBulkSubscriptionServiceUpdate = ("bulk" :> "subscriptionServiceUpdate" :> ReqBody '[JSON] BulkServiceUpdateReq :> Post '[JSON] Kernel.Types.APISuccess.APISuccess)
 
 type GetDriverStats =
-  ( "stats" :> QueryParam "day" Data.Time.Calendar.Day :> QueryParam "entityId" (Kernel.Types.Id.Id Dashboard.Common.Driver) :> ReqBody '[JSON] DriverStatReq
-      :> Get
-           '[JSON]
-           DriverStatsRes
+  ( "stats" :> QueryParam "entityId" (Kernel.Types.Id.Id Dashboard.Common.Driver) :> QueryParam "fromDate" Data.Time.Calendar.Day
+      :> QueryParam
+           "toDate"
+           Data.Time.Calendar.Day
+      :> ReqBody '[JSON] DriverStatReq
+      :> Get '[JSON] DriverStatsRes
   )
 
 type GetDriverStatsHelper =
-  ( "stats" :> QueryParam "day" Data.Time.Calendar.Day :> QueryParam "entityId" (Kernel.Types.Id.Id Dashboard.Common.Driver)
-      :> ReqBody
-           '[JSON]
-           DriverStatReq
+  ( "stats" :> QueryParam "entityId" (Kernel.Types.Id.Id Dashboard.Common.Driver) :> QueryParam "fromDate" Data.Time.Calendar.Day
+      :> QueryParam
+           "toDate"
+           Data.Time.Calendar.Day
+      :> ReqBody '[JSON] DriverStatReq
       :> Get '[JSON] DriverStatsRes
   )
 
@@ -583,7 +586,7 @@ data DriverAPIs = DriverAPIs
     getDriverSecurityDepositStatus :: Kernel.Types.Id.Id Dashboard.Common.Driver -> Kernel.Prelude.Maybe Dashboard.Common.Driver.ServiceNames -> EulerHS.Types.EulerClient [SecurityDepositDfStatusRes],
     getDriverPanAadharSelfieDetailsList :: Kernel.Prelude.Text -> Kernel.Types.Id.Id Dashboard.Common.Driver -> EulerHS.Types.EulerClient [PanAadharSelfieDetailsListResp],
     postDriverBulkSubscriptionServiceUpdate :: BulkServiceUpdateReq -> EulerHS.Types.EulerClient Kernel.Types.APISuccess.APISuccess,
-    getDriverStats :: Kernel.Prelude.Maybe Data.Time.Calendar.Day -> Kernel.Prelude.Maybe (Kernel.Types.Id.Id Dashboard.Common.Driver) -> DriverStatReq -> EulerHS.Types.EulerClient DriverStatsRes
+    getDriverStats :: Kernel.Prelude.Maybe (Kernel.Types.Id.Id Dashboard.Common.Driver) -> Kernel.Prelude.Maybe Data.Time.Calendar.Day -> Kernel.Prelude.Maybe Data.Time.Calendar.Day -> DriverStatReq -> EulerHS.Types.EulerClient DriverStatsRes
   }
 
 mkDriverAPIs :: (Client EulerHS.Types.EulerClient API -> DriverAPIs)

@@ -145,6 +145,18 @@ DailyStats:
       params: [payoutOrderId, payoutStatus]
       where: id
 
+    updateNumDriversOnboardedByDriverId:
+      kvFunction: updateOneWithKV
+      params: [numDriversOnboarded]
+      where:
+        and: [driverId, merchantLocalDate]
+
+    updateNumFleetsOnboardedByDriverId:
+      kvFunction: updateOneWithKV
+      params: [numFleetsOnboarded]
+      where:
+        and: [driverId, merchantLocalDate]
+
   extraOperations:
     - EXTRA_QUERY_FILE
 

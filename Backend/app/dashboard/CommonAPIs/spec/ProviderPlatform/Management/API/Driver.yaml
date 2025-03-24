@@ -495,8 +495,9 @@ apis:
       endpoint: /stats
       auth: ApiAuthV2
       query:
-        - day: Day
         - entityId: Id Driver
+        - fromDate: Day
+        - toDate: Day
       request:
         type: DriverStatReq
       response:
@@ -508,8 +509,9 @@ apis:
             endpoint: /stats
             auth: ApiAuthV2
             query:
-              - day: Day
               - entityId: Id Driver
+              - fromDate: Day
+              - toDate: Day
             request:
               type: DriverStatReq
             response:
@@ -708,7 +710,7 @@ types:
     - numDriversOnboarded: Int
     - numFleetsOnboarded: Int
   DriverStatReq:
-    - requestedPersonId: Text
+    - requestedEntityId: Text
 
 extraOperations:
   - EXTRA_API_TYPES_FILE

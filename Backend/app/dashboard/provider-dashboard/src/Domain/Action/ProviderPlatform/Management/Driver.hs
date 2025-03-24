@@ -335,7 +335,7 @@ postDriverBulkSubscriptionServiceUpdate merchantShortId opCity apiTokenInfo req 
   transaction <- T.buildTransaction (DT.castEndpoint apiTokenInfo.userActionType) (Just DRIVER_OFFER_BPP_MANAGEMENT) (Just apiTokenInfo) Nothing Nothing (Just req)
   T.withTransactionStoring transaction $ (do Client.callManagementAPI checkedMerchantId opCity (.driverDSL.postDriverBulkSubscriptionServiceUpdate) req)
 
-getDriverStats :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Maybe Day -> Maybe (Id Common.Driver) -> Common.DriverStatReq -> Flow Common.DriverStatsRes
-getDriverStats merchantShortId opCity apiTokenInfo day entityId req = do
+getDriverStats :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Maybe (Id Common.Driver) -> Maybe Day -> Maybe Day -> Common.DriverStatReq -> Flow Common.DriverStatsRes
+getDriverStats merchantShortId opCity apiTokenInfo entityId fromDate toDate req = do
   checkedMerchantId <- merchantCityAccessCheck merchantShortId apiTokenInfo.merchant.shortId opCity apiTokenInfo.city
-  Client.callManagementAPI checkedMerchantId opCity (.driverDSL.getDriverStats) day entityId req{requestedPersonId = apiTokenInfo.personId.getId}
+  Client.callManagementAPI checkedMerchantId opCity (.driverDSL.getDriverStats) entityId fromDate toDate req{requestedEntityId = apiTokenInfo.personId.getId}
