@@ -237,8 +237,8 @@ postDriverFleetVerifyJoiningOtp merchantShortId opCity apiTokenInfo mbAuthId mbF
 postDriverFleetLinkRCWithDriver :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Maybe Text -> Common.LinkRCWithDriverForFleetReq -> Flow APISuccess
 postDriverFleetLinkRCWithDriver merchantShortId opCity apiTokenInfo mbFleetOwnerId req = do
   checkedMerchantId <- merchantCityAccessCheck merchantShortId apiTokenInfo.merchant.shortId opCity apiTokenInfo.city
-  fleetOwnerId <- getFleetOwnerId apiTokenInfo.personId.getId mbFleetOwnerId
-  Client.callFleetAPI checkedMerchantId opCity (.driverDSL.postDriverFleetLinkRCWithDriver) fleetOwnerId req
+  -- fleetOwnerId <- getFleetOwnerId apiTokenInfo.personId.getId mbFleetOwnerId
+  Client.callFleetAPI checkedMerchantId opCity (.driverDSL.postDriverFleetLinkRCWithDriver) apiTokenInfo.personId.getId mbFleetOwnerId req
 
 postDriverFleetAddVehicles :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Maybe Text -> Common.CreateVehiclesReq -> Flow Common.APISuccessWithUnprocessedEntities
 postDriverFleetAddVehicles merchantShortId opCity apiTokenInfo mbFleetOwnerId req = do
