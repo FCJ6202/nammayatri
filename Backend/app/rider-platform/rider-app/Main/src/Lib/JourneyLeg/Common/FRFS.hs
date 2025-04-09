@@ -84,8 +84,8 @@ getState mode searchId riderLastPoints isLastCompleted = do
                 { status = if newStatus == JPT.InPlan then JT.getFRFSLegStatusFromBooking booking else newStatus,
                   userPosition,
                   vehiclePosition = vehiclePosition,
-                  nextStop = nextStopDetails <&> (.nextStop),
-                  nextStopTravelTime = nextStopDetails >>= (.nextStopTravelTime),
+                  nextStop = join (nextStopDetails <&> (.nextStop)),
+                  nextStopTravelTime = join (nextStopDetails <&> (.nextStopTravelTime)),
                   nextStopTravelDistance = join (nextStopDetails <&> (.nextStopTravelDistance)),
                   legOrder = journeyLegOrder,
                   subLegOrder = 1,
@@ -112,7 +112,7 @@ getState mode searchId riderLastPoints isLastCompleted = do
                     { status = if newStatus == JPT.InPlan then JT.getFRFSLegStatusFromBooking booking else newStatus,
                       userPosition,
                       vehiclePosition = vehiclePosition,
-                      nextStop = nextStopDetails <&> (.nextStop),
+                      nextStop = join (nextStopDetails <&> (.nextStop)),
                       nextStopTravelTime = Nothing,
                       nextStopTravelDistance = Nothing,
                       legOrder = journeyLegOrder,
@@ -148,7 +148,7 @@ getState mode searchId riderLastPoints isLastCompleted = do
                 { status = newStatus,
                   userPosition,
                   vehiclePosition = vehiclePosition,
-                  nextStop = nextStopDetails <&> (.nextStop),
+                  nextStop = join (nextStopDetails <&> (.nextStop)),
                   nextStopTravelTime = nextStopDetails >>= (.nextStopTravelTime),
                   nextStopTravelDistance = join (nextStopDetails <&> (.nextStopTravelDistance)),
                   legOrder = journeyLegInfo.journeyLegOrder,
@@ -184,7 +184,7 @@ getState mode searchId riderLastPoints isLastCompleted = do
                     { status = newStatus,
                       userPosition,
                       vehiclePosition = vehiclePosition,
-                      nextStop = nextStopDetails <&> (.nextStop),
+                      nextStop = join (nextStopDetails <&> (.nextStop)),
                       nextStopTravelTime = Nothing,
                       nextStopTravelDistance = Nothing,
                       legOrder = journeyLegInfo.journeyLegOrder,
@@ -227,9 +227,9 @@ getState mode searchId riderLastPoints isLastCompleted = do
                         mbStartStation = find (\station -> station.stationType == Just START) routeStations.stations
                         upcomingNearestVehicles =
                           sortBy
-                            (comparing (\(vehicleTrack, _, _) -> vehicleTrack.nextStop.sequenceNum) <> comparing (\(vehicleTrack, _, _) -> vehicleTrack.nextStopTravelDistance))
+                            (comparing (\(vehicleTrack, _, _) -> maybe 0 (.sequenceNum) vehicleTrack.nextStop) <> comparing (\(vehicleTrack, _, _) -> vehicleTrack.nextStopTravelDistance))
                             $ filter
-                              (\(vehicleTrack, _, _) -> maybe False (\startStation -> maybe False (\stationSequenceNum -> vehicleTrack.nextStop.sequenceNum <= stationSequenceNum) startStation.sequenceNum) mbStartStation)
+                              (\(vehicleTrack, _, _) -> maybe False (\startStation -> maybe False (\stationSequenceNum -> maybe False (\nextStop -> nextStop.sequenceNum <= stationSequenceNum) vehicleTrack.nextStop) startStation.sequenceNum) mbStartStation)
                               vehicleTrackingWithLatLong
                     pure ((\(vehicleTrack, lat, lon) -> (vehicleTrack, LatLong {..})) <$> listToMaybe upcomingNearestVehicles)
                   else
@@ -293,8 +293,8 @@ getState mode searchId riderLastPoints isLastCompleted = do
           QJRD.updateJourneyStatus (Just newStatus) searchId' subRoute.subLegOrder
       pure newStatuses
 
-getFare :: (CoreMetrics m, CacheFlow m r, EncFlow m r, EsqDBFlow m r, DB.EsqDBReplicaFlow m r) => DMerchant.Merchant -> MerchantOperatingCity -> Spec.VehicleCategory -> [FRFSRouteDetails] -> [Spec.ServiceTierType] -> m (Maybe JT.GetFareResponse)
-getFare merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes = do
+getFare :: (CoreMetrics m, CacheFlow m r, EncFlow m r, EsqDBFlow m r, DB.EsqDBReplicaFlow m r) => Id DPerson.Person -> DMerchant.Merchant -> MerchantOperatingCity -> Spec.VehicleCategory -> [FRFSRouteDetails] -> [Spec.ServiceTierType] -> m (Maybe JT.GetFareResponse)
+getFare riderId merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes = do
   QBC.findByMerchantIdDomainAndVehicle (Just merchant.id) (show Spec.FRFS) (frfsVehicleCategoryToBecknVehicleCategory vehicleCategory)
     >>= \case
       Just bapConfig -> do
@@ -304,7 +304,7 @@ getFare merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes
                 mapM
                   ( \FRFSRouteDetails {..} ->
                       case routeCode of
-                        Just routeCode' -> CallExternalBPP.getFares Nothing merchant merchantOperatingCity bapConfig routeCode' startStationCode endStationCode vehicleCategory DIBC.MULTIMODAL
+                        Just routeCode' -> CallExternalBPP.getFares riderId merchant merchantOperatingCity bapConfig routeCode' startStationCode endStationCode vehicleCategory DIBC.MULTIMODAL
                         Nothing -> return []
                   )
                   routeDetails
@@ -315,7 +315,7 @@ getFare merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes
                   Just routeDetail -> do
                     case routeDetail.routeCode of
                       Just routeCode' -> do
-                        fares <- CallExternalBPP.getFares Nothing merchant merchantOperatingCity bapConfig routeCode' routeDetail.startStationCode routeDetail.endStationCode vehicleCategory DIBC.MULTIMODAL
+                        fares <- CallExternalBPP.getFares riderId merchant merchantOperatingCity bapConfig routeCode' routeDetail.startStationCode routeDetail.endStationCode vehicleCategory DIBC.MULTIMODAL
                         return [fares]
                       Nothing -> return []
                   Nothing -> return []
@@ -325,14 +325,16 @@ getFare merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes
               logError $ "Getting Empty Fares for Vehicle Category : " <> show vehicleCategory
               return Nothing
             Right farePerRouteAcrossVehicleServiceTiers -> do
-              let farePerRoute = catMaybes (selectCorrectFare <$> farePerRouteAcrossVehicleServiceTiers)
-              if length farePerRoute /= length farePerRouteAcrossVehicleServiceTiers
+              let minFarePerRoute = catMaybes (selectMinFare <$> farePerRouteAcrossVehicleServiceTiers)
+              let maxFarePerRoute = catMaybes (selectMaxFare <$> farePerRouteAcrossVehicleServiceTiers)
+              if length minFarePerRoute /= length farePerRouteAcrossVehicleServiceTiers
                 then do
                   logError $ "Not Getting Fares for All Transit Routes for Vehicle Category : " <> show vehicleCategory
                   return Nothing
                 else do
-                  let totalFare = sum $ map ((.getHighPrecMoney) . (.amount) . (.price)) farePerRoute
-                  return (Just $ JT.GetFareResponse {estimatedMinFare = HighPrecMoney {getHighPrecMoney = totalFare}, estimatedMaxFare = HighPrecMoney {getHighPrecMoney = totalFare}})
+                  let minFare = sum $ map ((.getHighPrecMoney) . (.amount) . (.price)) minFarePerRoute
+                  let maxFare = sum $ map ((.getHighPrecMoney) . (.amount) . (.price)) maxFarePerRoute
+                  return (Just $ JT.GetFareResponse {estimatedMinFare = HighPrecMoney {getHighPrecMoney = minFare}, estimatedMaxFare = HighPrecMoney {getHighPrecMoney = maxFare}})
             Left err -> do
               logError $ "Exception Occured in Get Fare for Vehicle Category : " <> show vehicleCategory <> ", Error : " <> show err
               return Nothing
@@ -340,13 +342,21 @@ getFare merchant merchantOperatingCity vehicleCategory routeDetails serviceTypes
         logError $ "Did not get Beckn Config for Vehicle Category : " <> show vehicleCategory
         return Nothing
   where
-    selectCorrectFare :: [FRFSFare] -> Maybe FRFSFare
-    selectCorrectFare fares = do
+    filterFares :: [FRFSFare] -> [FRFSFare]
+    filterFares fares = do
       let sortedFares = sortOn (\fare -> fare.price.amount.getHighPrecMoney) fares
       let filteredFares = filter (\fare -> fare.vehicleServiceTier.serviceTierType `elem` serviceTypes) sortedFares
       if null filteredFares
-        then listToMaybe sortedFares
-        else listToMaybe filteredFares
+        then sortedFares
+        else filteredFares
+
+    selectMinFare :: [FRFSFare] -> Maybe FRFSFare
+    selectMinFare [] = Nothing
+    selectMinFare fares = Just $ minimumBy (\fare1 fare2 -> compare fare1.price.amount.getHighPrecMoney fare2.price.amount.getHighPrecMoney) (filterFares fares)
+
+    selectMaxFare :: [FRFSFare] -> Maybe FRFSFare
+    selectMaxFare [] = Nothing
+    selectMaxFare fares = Just $ maximumBy (\fare1 fare2 -> compare fare1.price.amount.getHighPrecMoney fare2.price.amount.getHighPrecMoney) (filterFares fares)
 
 getInfo :: (CacheFlow m r, EncFlow m r, EsqDBFlow m r, MonadFlow m) => Id FRFSSearch -> Maybe HighPrecMoney -> Maybe Distance -> Maybe Seconds -> m JT.LegInfo
 getInfo searchId fallbackFare distance duration = do
