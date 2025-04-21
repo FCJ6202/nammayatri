@@ -3,6 +3,7 @@
 
 module Domain.Types.SearchRequest where
 
+import qualified BecknV2.OnDemand.Enums
 import Data.Aeson
 import qualified Domain.Types.Client
 import qualified Domain.Types.Location
@@ -25,7 +26,8 @@ import qualified Lib.Yudhishthira.Types
 import qualified Tools.Beam.UtilsTH
 
 data SearchRequest = SearchRequest
-  { autoAssignEnabled :: Kernel.Prelude.Maybe Kernel.Prelude.Bool,
+  { allJourneysLoaded :: Kernel.Prelude.Maybe Kernel.Prelude.Bool,
+    autoAssignEnabled :: Kernel.Prelude.Maybe Kernel.Prelude.Bool,
     autoAssignEnabledV2 :: Kernel.Prelude.Maybe Kernel.Prelude.Bool,
     availablePaymentMethods :: [Kernel.Types.Id.Id Domain.Types.MerchantPaymentMethod.MerchantPaymentMethod],
     backendAppVersion :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
@@ -73,7 +75,8 @@ data SearchRequest = SearchRequest
     stops :: [Domain.Types.Location.Location],
     toLocation :: Kernel.Prelude.Maybe Domain.Types.Location.Location,
     totalRidesCount :: Kernel.Prelude.Maybe Kernel.Prelude.Int,
-    validTill :: Kernel.Prelude.UTCTime
+    validTill :: Kernel.Prelude.UTCTime,
+    vehicleCategory :: Kernel.Prelude.Maybe BecknV2.OnDemand.Enums.VehicleCategory
   }
   deriving (Generic, Show)
 

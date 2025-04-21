@@ -22,6 +22,9 @@ imports:
   RouteStopMapping: Domain.Types.RouteStopMapping
   JourneyOptionsSortingType: Domain.Types.MultimodalPreferences
   FRFSQuote: Domain.Types.FRFSQuote
+  AvailableRoutesByTier: Lib.JourneyModule.Utils
+  VehiclePosition: Lib.JourneyModule.Types
+  SDKPayloadDetails: Kernel.External.Payment.Juspay.Types
 
 module: MultimodalConfirm
 
@@ -42,11 +45,8 @@ types:
     legOrder: Int
     subLegOrder: Int
     status: JourneyLegStatus
-    vehiclePosition: Maybe LatLong
+    vehiclePositions: "[VehiclePosition]"
     userPosition: Maybe LatLong
-    nextStop: Maybe RouteStopMapping
-    nextStopTravelTime: Maybe Seconds
-    nextStopTravelDistance: Maybe Meters
     mode: MultimodalTravelMode
 
   JourneyStatusResp:
@@ -123,10 +123,20 @@ types:
 
   JourneyConfirmReq:
     journeyConfirmReqElements: "[JourneyConfirmReqElement]"
+
   JourneyConfirmReqElement:
     journeyLegOrder: Int
     skipBooking: Bool
     ticketQuantity: Maybe Int
+    crisSdkResponse: Maybe CrisSdkResponse
+
+  CrisSdkResponse:
+    osType: Text
+    osBuildVersion: Text
+    bookAuthCode: Text
+
+  LegServiceTierOptionsResp:
+    options: "[AvailableRoutesByTier]"
 
   TransportRoute:
     cd: Text
@@ -153,6 +163,12 @@ types:
     ss: [TransportStation]
     rsm: [TransportRouteStopMapping]
     ptcv: Text
+
+  UpdatePaymentOrderReq:
+    amount: HighPrecMoney
+
+  UpdatePaymentOrderResp:
+    sdkPayload: Maybe SDKPayloadDetails
 
 apis:
   - POST:
@@ -183,6 +199,15 @@ apis:
         journeyId: Id Journey
       response:
         type: JourneyBookingPaymentStatus
+  - POST:
+      endpoint : /multimodal/{journeyId}/payment/updateOrder
+      auth: TokenAuth
+      request:
+        type: UpdatePaymentOrderReq
+      params:
+        journeyId: Id Journey
+      response:
+        type: UpdatePaymentOrderResp
 
   - POST:
       endpoint: /multimodal/{journeyId}/switch # combine with other legs if they match
@@ -311,3 +336,11 @@ apis:
         publicTransportConfigVersion: Text
       response:
         type: PublicTransportData
+
+  - GET:
+      endpoint: /multimodal/{journeyId}/order/{legOrder}/getLegTierOptions
+      params:
+        journeyId: Id Journey
+        legOrder: Int
+      response:
+        type: LegServiceTierOptionsResp

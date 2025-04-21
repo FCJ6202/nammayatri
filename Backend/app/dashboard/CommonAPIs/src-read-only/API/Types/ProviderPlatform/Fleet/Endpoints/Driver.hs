@@ -291,7 +291,9 @@ data FleetOwnerInfoRes = FleetOwnerInfoRes
     gstNumber :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
     gstImageId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
     panNumber :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
-    fleetConfig :: Kernel.Prelude.Maybe FleetConfig
+    fleetConfig :: Kernel.Prelude.Maybe FleetConfig,
+    operatorName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    operatorContact :: Kernel.Prelude.Maybe Kernel.Prelude.Text
   }
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -546,6 +548,7 @@ data VerificationDocsStatus = VerificationDocsStatus
     vehiclePermit :: Kernel.Prelude.Maybe Dashboard.Common.VerificationStatus,
     vehicleFitness :: Kernel.Prelude.Maybe Dashboard.Common.VerificationStatus,
     vehicleInsurance :: Kernel.Prelude.Maybe Dashboard.Common.VerificationStatus,
+    vehiclePUC :: Kernel.Prelude.Maybe Dashboard.Common.VerificationStatus,
     driverLicense :: Kernel.Prelude.Maybe Dashboard.Common.VerificationStatus
   }
   deriving stock (Generic)
@@ -1294,7 +1297,10 @@ type PostDriverDashboardFleetWmbTripEnd =
            (Kernel.Types.Id.Id Dashboard.Common.TripTransaction)
       :> "end"
       :> QueryParam "fleetOwnerId" Kernel.Prelude.Text
-      :> Post '[JSON] Kernel.Types.APISuccess.APISuccess
+      :> QueryParam "terminationSource" Dashboard.Common.ActionSource
+      :> Post
+           '[JSON]
+           Kernel.Types.APISuccess.APISuccess
   )
 
 type PostDriverDashboardFleetWmbTripEndHelper =
@@ -1304,7 +1310,10 @@ type PostDriverDashboardFleetWmbTripEndHelper =
            (Kernel.Types.Id.Id Dashboard.Common.TripTransaction)
       :> Capture "fleetOwnerId" Kernel.Prelude.Text
       :> "end"
-      :> Post '[JSON] Kernel.Types.APISuccess.APISuccess
+      :> QueryParam "terminationSource" Dashboard.Common.ActionSource
+      :> Post
+           '[JSON]
+           Kernel.Types.APISuccess.APISuccess
   )
 
 type GetDriverFleetWmbRouteDetails =
@@ -1373,7 +1382,7 @@ data DriverAPIs = DriverAPIs
     postDriverFleetAddDrivers :: (Data.ByteString.Lazy.ByteString, CreateDriversReq) -> EulerHS.Types.EulerClient APISuccessWithUnprocessedEntities,
     postDriverFleetAddDriverBusRouteMapping :: (Data.ByteString.Lazy.ByteString, CreateDriverBusRouteMappingReq) -> EulerHS.Types.EulerClient APISuccessWithUnprocessedEntities,
     postDriverFleetLinkRCWithDriver :: Kernel.Prelude.Text -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> LinkRCWithDriverForFleetReq -> EulerHS.Types.EulerClient Kernel.Types.APISuccess.APISuccess,
-    postDriverDashboardFleetWmbTripEnd :: Kernel.Types.Id.Id Dashboard.Common.TripTransaction -> Kernel.Prelude.Text -> EulerHS.Types.EulerClient Kernel.Types.APISuccess.APISuccess,
+    postDriverDashboardFleetWmbTripEnd :: Kernel.Types.Id.Id Dashboard.Common.TripTransaction -> Kernel.Prelude.Text -> Kernel.Prelude.Maybe Dashboard.Common.ActionSource -> EulerHS.Types.EulerClient Kernel.Types.APISuccess.APISuccess,
     getDriverFleetWmbRouteDetails :: Kernel.Prelude.Text -> Kernel.Prelude.Text -> EulerHS.Types.EulerClient RouteDetails,
     postDriverFleetGetNearbyDrivers :: Kernel.Prelude.Text -> NearbyDriverReq -> EulerHS.Types.EulerClient NearbyDriverResp,
     postDriverDashboardFleetTrackDriver :: Kernel.Prelude.Text -> TrackDriverLocationsReq -> EulerHS.Types.EulerClient TrackDriverLocationsRes

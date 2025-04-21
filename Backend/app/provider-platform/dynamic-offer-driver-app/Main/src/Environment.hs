@@ -149,7 +149,9 @@ data AppCfg = AppCfg
     nyGatewayUrl :: BaseUrl,
     nammayatriRegistryConfig :: NyRegistry.RegistryConfig,
     urlShortnerConfig :: UrlShortner.UrlShortnerConfig,
-    selfBaseUrl :: BaseUrl
+    selfBaseUrl :: BaseUrl,
+    meterRideReferralLink :: Text,
+    minDistanceBetweenTwoPoints :: Int
   }
   deriving (Generic, FromDhall)
 
@@ -251,7 +253,9 @@ data AppEnv = AppEnv
     nyGatewayUrl :: BaseUrl,
     nammayatriRegistryConfig :: NyRegistry.RegistryConfig,
     urlShortnerConfig :: UrlShortner.UrlShortnerConfig,
-    selfBaseUrl :: BaseUrl
+    selfBaseUrl :: BaseUrl,
+    meterRideReferralLink :: Text,
+    minDistanceBetweenTwoPoints :: Int
   }
   deriving (Generic)
 

@@ -379,6 +379,36 @@ view push state =
                     , visibility $ state.headerInfo.visibility
                     ] <> (FontStyle.body1 TypoGraphy)
                 ]
+            ]     
+        , linearLayout
+           [ height WRAP_CONTENT
+            , gravity CENTER
+            , background state.goldTierRewardConfig.backgroundColor
+            , cornerRadius state.goldTierRewardConfig.cornerRadius
+            , padding state.goldTierRewardConfig.padding
+            , margin state.goldTierRewardConfig.margin
+            , visibility $ boolToVisibility 
+                (state.primaryText.text == state.goldTierRewardConfig.cancellationWarningText 
+                && isJust state.goldTierRewardConfig.coinsLoss)
+            ]
+            [ textView
+                [ text state.goldTierRewardConfig.text
+                , color state.goldTierRewardConfig.textColor
+                , margin $ MarginRight 8
+                , padding $ PaddingLeft 8
+                ]
+            , imageView
+                [ imageWithFallback state.goldTierRewardConfig.coinImage.imageUrl
+                , height state.goldTierRewardConfig.coinImage.height
+                , width state.goldTierRewardConfig.coinImage.width
+                , margin state.goldTierRewardConfig.coinImage.margin
+                ]
+            , imageView
+                [ imageWithFallback state.goldTierRewardConfig.arrowImage.imageUrl
+                , height state.goldTierRewardConfig.arrowImage.height
+                , width state.goldTierRewardConfig.arrowImage.width
+                , margin state.goldTierRewardConfig.arrowImage.margin
+                ]
             ]
         , linearLayout
           [ width MATCH_PARENT

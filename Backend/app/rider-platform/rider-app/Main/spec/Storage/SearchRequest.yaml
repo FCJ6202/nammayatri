@@ -30,6 +30,7 @@ imports:
   ConfigVersionMap: Lib.Yudhishthira.Types
   Value: Data.Aeson
   RecentLocation: Domain.Types.RecentLocation
+  VehicleCategory: BecknV2.OnDemand.Enums
 
 SearchRequest:
   tableName: search_request
@@ -85,7 +86,9 @@ SearchRequest:
     routeCode: Maybe Text
     originStopCode: Maybe Text
     destinationStopCode: Maybe Text
+    vehicleCategory: Maybe VehicleCategory
     configInExperimentVersions: "[ConfigVersionMap]"
+    allJourneysLoaded: Maybe Bool
 
 
   default:
@@ -232,6 +235,11 @@ SearchRequest:
       kvFunction: updateOneWithKV
       params: [id, totalRidesCount]
       where: riderId
+
+    updateAllJourneysLoaded:
+      kvFunction: updateOneWithKV
+      params: [allJourneysLoaded]
+      where: id
 
     updateInitiatedBy:
       kvFunction: updateOneWithKV

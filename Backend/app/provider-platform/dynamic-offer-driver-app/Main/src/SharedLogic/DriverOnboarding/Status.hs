@@ -21,6 +21,7 @@ where
 import Control.Applicative ((<|>))
 import qualified Control.Monad.Extra as Extra
 import qualified Data.Text as T
+import qualified Domain.Action.UI.DriverOnboarding.DriverLicense as DDL
 import qualified Domain.Action.UI.DriverOnboarding.VehicleRegistrationCertificate as DomainRC
 import qualified Domain.Action.UI.Plan as DAPlan
 import qualified Domain.Types.AadhaarCard as DAadhaarCard
@@ -41,6 +42,7 @@ import Environment
 import Kernel.Beam.Functions
 import Kernel.External.Encryption
 import Kernel.External.Types
+import qualified Kernel.External.Verification as KEV
 import Kernel.Prelude
 import qualified Kernel.Types.Documents as Documents
 import Kernel.Types.Error hiding (Unauthorized)
@@ -50,12 +52,14 @@ import SharedLogic.DriverOnboarding
 import qualified Storage.CachedQueries.DocumentVerificationConfig as CQDVC
 import qualified Storage.Queries.AadhaarCard as QAadhaarCard
 import qualified Storage.Queries.BackgroundVerification as BVQuery
+import qualified Storage.Queries.DriverGstin as QDGST
 import qualified Storage.Queries.DriverInformation as DIQuery
 import qualified Storage.Queries.DriverInformation.Internal as DIIQuery
 import qualified Storage.Queries.DriverLicense as DLQuery
 import qualified Storage.Queries.DriverPanCard as QDPC
 import qualified Storage.Queries.DriverRCAssociation as DRAQuery
 import qualified Storage.Queries.DriverSSN as QDSSN
+import qualified Storage.Queries.FleetOwnerInformation as QFOI
 import qualified Storage.Queries.HyperVergeVerification as HVQuery
 import qualified Storage.Queries.IdfyVerification as IVQuery
 import qualified Storage.Queries.Image as IQuery
@@ -70,6 +74,7 @@ import qualified Storage.Queries.VehiclePermit as VPQuery
 import qualified Storage.Queries.VehicleRegistrationCertificate as RCQuery
 import qualified Tools.BackgroundVerification as BackgroundVerification
 import Tools.Error (DriverOnboardingError (ImageNotValid))
+import qualified Tools.Verification as Verification
 
 -- PENDING means "pending verification"
 -- FAILED is used when verification is failed
@@ -150,14 +155,15 @@ statusHandler' ::
   Maybe Bool ->
   Maybe DVC.VehicleCategory ->
   Maybe DL.DriverLicense ->
+  Maybe Bool ->
   Flow StatusRes'
-statusHandler' personId merchantOperatingCity transporterConfig makeSelfieAadhaarPanMandatory multipleRC prefillData onboardingVehicleCategory mDL = do
+statusHandler' personId merchantOperatingCity transporterConfig makeSelfieAadhaarPanMandatory multipleRC prefillData onboardingVehicleCategory mDL useHVSdkForDL = do
   let merchantId = merchantOperatingCity.merchantId
       merchantOpCityId = merchantOperatingCity.id
   person <- runInReplica $ Person.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
   let language = fromMaybe merchantOperatingCity.language person.language
 
-  driverDocuments <- fetchDriverDocuments personId merchantOperatingCity transporterConfig language
+  driverDocuments <- fetchDriverDocuments personId merchantOperatingCity transporterConfig language useHVSdkForDL
 
   vehicleDocumentsUnverified <- fetchVehicleDocuments personId merchantOperatingCity transporterConfig language
 
@@ -166,7 +172,7 @@ statusHandler' personId merchantOperatingCity transporterConfig makeSelfieAadhaa
     let mandatoryVehicleDocumentVerificationConfigs = filter (\config -> config.documentType `elem` vehicleDocumentTypes && config.isMandatory) documentVerificationConfigs
     when (null mandatoryVehicleDocumentVerificationConfigs) $ do
       allDriverDocsVerified <- Extra.allM (\doc -> checkIfDocumentValid merchantOpCityId doc.documentType vehicleCategory doc.verificationStatus makeSelfieAadhaarPanMandatory) driverDocuments
-      when (allDriverDocsVerified && transporterConfig.requiresOnboardingInspection /= Just True) $ do
+      when (allDriverDocsVerified && transporterConfig.requiresOnboardingInspection /= Just True && person.role == DP.DRIVER) $ do
         enableDriver merchantOpCityId personId mDL
         whenJust onboardingVehicleCategory $ \category -> do
           DIIQuery.updateOnboardingVehicleCategory (Just category) personId
@@ -177,22 +183,27 @@ statusHandler' personId merchantOperatingCity transporterConfig makeSelfieAadhaa
   (dlDetails, rcDetails) <-
     case prefillData of
       Just True -> do
-        dlImgIds <- map (.id) <$> runInReplica (IQuery.findImagesByPersonAndType merchantId personId DVC.DriverLicense)
         vehRegImgIds <- map (.id) <$> runInReplica (IQuery.findImagesByPersonAndType merchantId personId DVC.VehicleRegistrationCertificate)
-        allDlImgs <- runInReplica $ DLQuery.findAllByImageId dlImgIds
+        dl <- runInReplica $ DLQuery.findByDriverId personId <&> maybeToList
         allRCImgs <- runInReplica $ RCQuery.findAllByImageId vehRegImgIds
-        allDLDetails <- mapM convertDLToDLDetails allDlImgs
+        allDLDetails <- mapM convertDLToDLDetails dl
         allRCDetails <- mapM convertRCToRCDetails allRCImgs
         return (Just allDLDetails, Just allRCDetails)
       _ -> return (Nothing, Nothing)
 
-  driverInfo <- DIQuery.findById (cast personId) >>= fromMaybeM (PersonNotFound personId.getId)
+  enabled <- case person.role of
+    DP.FLEET_OWNER -> do
+      fleetOwnerInfo <- runInReplica $ QFOI.findByPrimaryKey personId >>= fromMaybeM (PersonNotFound personId.getId)
+      return fleetOwnerInfo.enabled
+    _ -> do
+      driverInfo <- DIQuery.findById (cast personId) >>= fromMaybeM (PersonNotFound personId.getId)
+      return driverInfo.enabled
 
   return $
     StatusRes'
       { driverDocuments,
         vehicleDocuments,
-        enabled = driverInfo.enabled,
+        enabled = enabled,
         manualVerificationRequired = transporterConfig.requiresOnboardingInspection,
         driverLicenseDetails = dlDetails,
         vehicleRegistrationCertificateDetails = rcDetails
@@ -251,12 +262,13 @@ fetchDriverDocuments ::
   DMOC.MerchantOperatingCity ->
   DTC.TransporterConfig ->
   Language ->
+  Maybe Bool ->
   Flow [DocumentStatusItem]
-fetchDriverDocuments personId merchantOpCity transporterConfig language = do
+fetchDriverDocuments personId merchantOpCity transporterConfig language useHVSdkForDL = do
   let merchantId = merchantOpCity.merchantId
       merchantOpCityId = merchantOpCity.id
   driverDocumentTypes `forM` \docType -> do
-    (mbStatus, mbProcessedReason, mbProcessedUrl) <- getProcessedDriverDocuments docType personId merchantId merchantOpCityId
+    (mbStatus, mbProcessedReason, mbProcessedUrl) <- getProcessedDriverDocuments docType personId merchantId merchantOpCityId useHVSdkForDL
     case mbStatus of
       Just status -> do
         message <- documentStatusMessage status Nothing docType mbProcessedUrl language
@@ -445,12 +457,17 @@ checkIfDocumentValid merchantOpCityId docType category status makeSelfieAadhaarP
         else return True
     Nothing -> return True
 
-getProcessedDriverDocuments :: DVC.DocumentType -> Id DP.Person -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> Flow (Maybe ResponseStatus, Maybe Text, Maybe BaseUrl)
-getProcessedDriverDocuments docType driverId _merchantId _merchantOpCityId =
+getProcessedDriverDocuments :: DVC.DocumentType -> Id DP.Person -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> Maybe Bool -> Flow (Maybe ResponseStatus, Maybe Text, Maybe BaseUrl)
+getProcessedDriverDocuments docType driverId _merchantId merchantOpCityId useHVSdkForDL =
   case docType of
     DVC.DriverLicense -> do
       mbDL <- DLQuery.findByDriverId driverId -- add failure reason in dl and rc
-      return (mapStatus <$> (mbDL <&> (.verificationStatus)), mbDL >>= (.rejectReason), Nothing)
+      if isNothing mbDL && (useHVSdkForDL == Just True)
+        then do
+          void $ try @_ @SomeException $ callGetDLGetStatus driverId merchantOpCityId
+          mbDL' <- DLQuery.findByDriverId driverId
+          return (mapStatus <$> (mbDL' <&> (.verificationStatus)), mbDL' >>= (.rejectReason), Nothing)
+        else return (mapStatus <$> (mbDL <&> (.verificationStatus)), mbDL >>= (.rejectReason), Nothing)
     DVC.AadhaarCard -> do
       mbAadhaarCard <- QAadhaarCard.findByPrimaryKey driverId
       return (mapStatus . (.verificationStatus) <$> mbAadhaarCard, Nothing, Nothing)
@@ -463,12 +480,27 @@ getProcessedDriverDocuments docType driverId _merchantId _merchantOpCityId =
     DVC.PanCard -> do
       mbPanCard <- QDPC.findByDriverId driverId
       return (mapStatus . (.verificationStatus) <$> mbPanCard, Nothing, Nothing)
+    DVC.GSTCertificate -> do
+      mbGSTCertificate <- QDGST.findByDriverId driverId
+      return (mapStatus . (.verificationStatus) <$> mbGSTCertificate, Nothing, Nothing)
     DVC.BackgroundVerification -> do
       mbBackgroundVerification <- BVQuery.findByDriverId driverId
       if (mbBackgroundVerification <&> (.reportStatus)) == Just Documents.VALID
         then return (Just VALID, Nothing, Nothing)
         else return (Nothing, Nothing, Nothing)
     _ -> return (Nothing, Nothing, Nothing)
+
+callGetDLGetStatus :: Id DP.Person -> Id DMOC.MerchantOperatingCity -> Flow ()
+callGetDLGetStatus driverId merchantOpCityId = do
+  latestReq <- listToMaybe <$> HVQuery.findLatestByDriverIdAndDocType Nothing Nothing driverId DVC.DriverLicense
+  whenJust latestReq $ \verificationReq -> do
+    when (verificationReq.status == "pending" || verificationReq.status == "source_down_retrying") $ do
+      rsp <- Verification.getTask merchantOpCityId KEV.HyperVergeRCDL (KEV.GetTaskReq (Just "checkDL") verificationReq.requestId) HVQuery.updateResponse
+      case rsp of
+        KEV.DLResp resp -> do
+          logDebug $ "callGetDLGetStatus: getTask api response for request id : " <> verificationReq.requestId <> " is : " <> show resp
+          unless ("still being processed" `T.isInfixOf` (fromMaybe "" resp.message)) (void $ DDL.onVerifyDL (makeHVVerificationReqRecord verificationReq) resp KEV.HyperVergeRCDL)
+        _ -> throwError $ InternalError "Document and apiEndpoint mismatch occurred !!!!!!!!"
 
 getProcessedVehicleDocuments :: DVC.DocumentType -> Id DP.Person -> RC.VehicleRegistrationCertificate -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> Flow (Maybe ResponseStatus, Maybe Text, Maybe BaseUrl)
 getProcessedVehicleDocuments docType driverId vehicleRC _merchantId _merchantOpCityId =
@@ -557,6 +589,7 @@ getInProgressDriverDocuments docType driverId onboardingTryLimit merchantId merc
     DDVC.BackgroundVerification -> checkBackgroundVerificationStatus driverId merchantId merchantOpCityId
     DDVC.AadhaarCard -> checkIfImageUploadedOrInvalidated DDVC.AadhaarCard driverId
     DDVC.PanCard -> checkIfImageUploadedOrInvalidated DDVC.PanCard driverId
+    DDVC.GSTCertificate -> checkIfImageUploadedOrInvalidated DDVC.GSTCertificate driverId
     DDVC.Permissions -> return (VALID, Nothing, Nothing)
     DDVC.ProfilePhoto -> do
       mbImages <- IQuery.findRecentLatestByPersonIdAndImageType driverId DDVC.ProfilePhoto
@@ -603,7 +636,7 @@ checkIfUnderProgress docType driverId onboardingTryLimit = do
   where
     handleImages images
       | null images = return (NO_DOC_AVAILABLE, Nothing, Nothing)
-      | length images > onboardingTryLimit = return (LIMIT_EXCEED, Nothing, Nothing)
+      | length images > onboardingTryLimit * bool 1 2 (docType == DVC.DriverLicense || docType == DVC.AadhaarCard) = return (LIMIT_EXCEED, Nothing, Nothing)
       | otherwise = do
         let latestImage = head images
         if latestImage.verificationStatus == Just Documents.INVALID
@@ -656,9 +689,18 @@ getAadhaarStatus personId = do
         else return (MANUAL_VERIFICATION_REQUIRED, Just aadhaarCard)
     Nothing -> return (NO_DOC_AVAILABLE, Nothing)
 
-getDLAndStatus :: Id DP.Person -> Id DMOC.MerchantOperatingCity -> Int -> Language -> Flow (ResponseStatus, Maybe DL.DriverLicense, Text)
-getDLAndStatus driverId merchantOpCityId onboardingTryLimit language = do
-  mDriverLicense <- DLQuery.findByDriverId driverId
+getDLAndStatus :: Id DP.Person -> Id DMOC.MerchantOperatingCity -> Int -> Language -> Maybe Bool -> Flow (ResponseStatus, Maybe DL.DriverLicense, Text)
+getDLAndStatus driverId merchantOpCityId onboardingTryLimit language useHVSdkForDL = do
+  mDriverLicense <- do
+    mbDL' <- DLQuery.findByDriverId driverId
+    case mbDL' of
+      Just dl -> return $ Just dl
+      Nothing -> do
+        if useHVSdkForDL == Just True
+          then do
+            void $ try @_ @SomeException $ callGetDLGetStatus driverId merchantOpCityId
+            DLQuery.findByDriverId driverId
+          else return Nothing
   (status, message) <-
     case mDriverLicense of
       Just driverLicense -> do
@@ -729,10 +771,10 @@ checkIfInVerification driverId _merchantOpCityId onboardingTryLimit docType lang
   hvVerificationReq <- listToMaybe <$> HVQuery.findLatestByDriverIdAndDocType Nothing Nothing driverId docType
   let mbVerificationReqRecord = getLatestVerificationRecord idfyVerificationReq hvVerificationReq
   images <- IQuery.findRecentByPersonIdAndImageType driverId docType
-  verificationStatusWithMessage onboardingTryLimit (length images) mbVerificationReqRecord language
+  verificationStatusWithMessage onboardingTryLimit (length images) mbVerificationReqRecord language docType
 
-verificationStatusWithMessage :: Int -> Int -> Maybe VerificationReqRecord -> Language -> Flow (ResponseStatus, Text)
-verificationStatusWithMessage onboardingTryLimit imagesNum mbVerificationReqRecord language =
+verificationStatusWithMessage :: Int -> Int -> Maybe VerificationReqRecord -> Language -> DVC.DocumentType -> Flow (ResponseStatus, Text)
+verificationStatusWithMessage onboardingTryLimit imagesNum mbVerificationReqRecord language docType =
   case mbVerificationReqRecord of
     Just req -> do
       if req.status == "pending" || req.status == "source_down_retrying"
@@ -743,7 +785,7 @@ verificationStatusWithMessage onboardingTryLimit imagesNum mbVerificationReqReco
           message <- getMessageFromResponse language req.verificaitonResponse
           return (FAILED, message)
     Nothing -> do
-      if imagesNum > onboardingTryLimit
+      if imagesNum > onboardingTryLimit * bool 1 2 (docType == DVC.DriverLicense)
         then do
           msg <- toVerificationMessage LimitExceed language
           return (LIMIT_EXCEED, msg)

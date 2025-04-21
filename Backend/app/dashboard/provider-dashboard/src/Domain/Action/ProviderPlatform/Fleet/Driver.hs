@@ -120,14 +120,16 @@ getFleetOwnerIds memberPersonId mbFleetOwnerId = do
           fleetMemberAssociations -> do
             mapM
               ( \DFMA.FleetMemberAssociation {..} -> do
-                  person <- QP.findById (Id fleetOwnerId) >>= fromMaybeM (PersonNotFound fleetOwnerId)
+                  fleetMemberAssociation <- FMA.findOneByFleetOwnerId fleetOwnerId True >>= fromMaybeM (PersonNotFound fleetOwnerId)
+                  person <- QP.findById (Id fleetMemberAssociation.fleetMemberId) >>= fromMaybeM (PersonNotFound fleetMemberAssociation.fleetMemberId)
                   return (fleetOwnerId, person.firstName <> " " <> person.lastName)
               )
               fleetMemberAssociations
     )
     identity
     ( ( \fleetOwnerId -> do
-          person <- QP.findById (Id fleetOwnerId) >>= fromMaybeM (PersonNotFound fleetOwnerId)
+          fleetMemberAssociation <- FMA.findOneByFleetOwnerId fleetOwnerId True >>= fromMaybeM (PersonNotFound fleetOwnerId)
+          person <- QP.findById (Id fleetMemberAssociation.fleetMemberId) >>= fromMaybeM (PersonNotFound fleetMemberAssociation.fleetMemberId)
           return [(fleetOwnerId, person.firstName <> " " <> person.lastName)]
       )
         <$> mbFleetOwnerId
@@ -138,9 +140,9 @@ verifyFleetOwnerAccess :: Text -> Text -> Flow Text
 verifyFleetOwnerAccess fleetMemberId accessedFleetOwnerId = do
   fleetOwnerIds <- getFleetOwnerIds fleetMemberId Nothing
   (fleetOwnerId, _) <- find (\(fleetOwnerId, _) -> fleetOwnerId == accessedFleetOwnerId) fleetOwnerIds & fromMaybeM AccessDenied
-  let otherFleetOwnerIds = filter (\fleetOwnerId' -> fleetOwnerId' /= accessedFleetOwnerId) $ map fst fleetOwnerIds
-  when (not $ null otherFleetOwnerIds) $
-    FMA.updateFleetMembersActiveStatus False fleetMemberId otherFleetOwnerIds
+  -- let otherFleetOwnerIds = filter (\fleetOwnerId' -> fleetOwnerId' /= accessedFleetOwnerId) $ map fst fleetOwnerIds
+  -- when (not $ null otherFleetOwnerIds) $
+  --   FMA.updateFleetMembersActiveStatus False fleetMemberId otherFleetOwnerIds
   return fleetOwnerId
 
 ------------------------------------- Fleet Owners Access Control --------------------------------------
@@ -164,7 +166,8 @@ getDriverFleetAccessList merchantShortId opCity apiTokenInfo = do
   ownersList <-
     mapM
       ( \fleetMemberAssociation -> do
-          person <- QP.findById (Id fleetMemberAssociation.fleetOwnerId) >>= fromMaybeM (PersonNotFound fleetMemberAssociation.fleetOwnerId)
+          fleetMemberAssociation' <- FMA.findOneByFleetOwnerId fleetMemberAssociation.fleetOwnerId True >>= fromMaybeM (PersonNotFound fleetMemberAssociation.fleetOwnerId)
+          person <- QP.findById (Id fleetMemberAssociation'.fleetMemberId) >>= fromMaybeM (PersonNotFound fleetMemberAssociation'.fleetMemberId)
           return $
             Common.FleetOwnerListAPIEntity
               { fleetOwnerId = fleetMemberAssociation.fleetOwnerId,
@@ -276,12 +279,12 @@ postDriverFleetRespondDriverRequest merchantShortId opCity apiTokenInfo mbFleetO
   T.withTransactionStoring transaction $
     Client.callFleetAPI checkedMerchantId opCity (.driverDSL.postDriverFleetRespondDriverRequest) fleetOwnerId req
 
-postDriverDashboardFleetWmbTripEnd :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Id Common.TripTransaction -> Maybe Text -> Flow APISuccess
-postDriverDashboardFleetWmbTripEnd merchantShortId opCity apiTokenInfo tripTransactionId mbFleetOwnerId = do
+postDriverDashboardFleetWmbTripEnd :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Id Common.TripTransaction -> Maybe Text -> Maybe Common.ActionSource -> Flow APISuccess
+postDriverDashboardFleetWmbTripEnd merchantShortId opCity apiTokenInfo tripTransactionId mbFleetOwnerId mbTerminationSource = do
   checkedMerchantId <- merchantCityAccessCheck merchantShortId apiTokenInfo.merchant.shortId opCity apiTokenInfo.city
   transaction <- buildTransaction apiTokenInfo Nothing (Just $ DCommon.TransactionLogId tripTransactionId.getId)
   fleetOwnerId <- getFleetOwnerId apiTokenInfo.personId.getId mbFleetOwnerId
-  T.withTransactionStoring transaction $ Client.callFleetAPI checkedMerchantId opCity (.driverDSL.postDriverDashboardFleetWmbTripEnd) tripTransactionId fleetOwnerId
+  T.withTransactionStoring transaction $ Client.callFleetAPI checkedMerchantId opCity (.driverDSL.postDriverDashboardFleetWmbTripEnd) tripTransactionId fleetOwnerId mbTerminationSource
 
 postDriverFleetUnlink :: ShortId DM.Merchant -> City.City -> ApiTokenInfo -> Id Common.Driver -> Text -> Maybe Text -> Flow APISuccess
 postDriverFleetUnlink merchantShortId opCity apiTokenInfo driverId vehicleNo mbFleetOwnerId = do

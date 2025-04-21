@@ -33,9 +33,7 @@ import qualified API.UI.Select as Select
 import qualified Beckn.ACL.Cancel as ACL
 import qualified Beckn.ACL.Search as TaxiACL
 import qualified BecknV2.OnDemand.Enums
-import Control.Monad.Extra (maybeM)
 import Data.Aeson
-import Data.List (partition, sortBy, sortOn)
 import qualified Data.Text as T
 import qualified Domain.Action.UI.Cancel as DCancel
 import qualified Domain.Action.UI.MultimodalConfirm as DMC
@@ -46,6 +44,7 @@ import qualified Domain.Types.BookingCancellationReason as SBCR
 import qualified Domain.Types.CancellationReason as SCR
 import qualified Domain.Types.Client as DC
 import qualified Domain.Types.Estimate as Estimate
+import qualified Domain.Types.IntegratedBPPConfig as DIBC
 import qualified Domain.Types.Merchant as Merchant
 import Domain.Types.MultimodalPreferences as DMP
 import qualified Domain.Types.Person as Person
@@ -53,6 +52,7 @@ import qualified Domain.Types.RiderConfig as DRC
 import qualified Domain.Types.SearchRequest as SearchRequest
 import qualified Domain.Types.Trip as DTrip
 import Environment
+import Kernel.External.Encryption
 import Kernel.External.Maps.Google.MapsClient.Types
 import qualified Kernel.External.MultiModal.Interface as MInterface
 import qualified Kernel.External.MultiModal.Interface as MultiModal
@@ -72,19 +72,18 @@ import Kernel.Utils.SlidingWindowLimiter
 import Kernel.Utils.Version
 import qualified Lib.JourneyModule.Base as JM
 import qualified Lib.JourneyModule.Types as JMTypes
+import qualified Lib.JourneyModule.Utils as JMU
 import Servant hiding (throwError)
 import qualified SharedLogic.CallBPP as CallBPP
 import SharedLogic.Search as DSearch
 import Storage.Beam.SystemConfigs ()
 import qualified Storage.CachedQueries.IntegratedBPPConfig as QIntegratedBPPConfig
 import qualified Storage.CachedQueries.Merchant as CQM
-import qualified Storage.CachedQueries.Merchant.MultiModalBus as CQMultiModal
 import qualified Storage.CachedQueries.Merchant.RiderConfig as QRC
 import qualified Storage.Queries.Booking as QBooking
 import qualified Storage.Queries.Estimate as QEstimate
 import qualified Storage.Queries.Person as Person
 import qualified Storage.Queries.Ride as QR
-import qualified Storage.Queries.Route as QRoute
 import qualified Storage.Queries.SearchRequest as QSearchRequest
 import Tools.Auth
 import Tools.Error
@@ -114,6 +113,7 @@ type API =
       :> Header "client-id" (Id DC.Client)
       :> Header "x-device" Text
       :> Header "is-dashboard-request" Bool
+      :> Header "imei-number" Text
       :> Post '[JSON] MultimodalSearchResp
 
 type SearchAPI =
@@ -199,11 +199,14 @@ handleBookingCancellation merchantId _personId sReqId = do
       void $ withShortRetry $ CallBPP.cancelV2 merchantId dCancelRes.bppUrl =<< ACL.buildCancelReqV2 dCancelRes cancelReq.reallocate
     _ -> pure ()
 
-multimodalSearchHandler :: (Id Person.Person, Id Merchant.Merchant) -> DSearch.SearchReq -> Maybe Bool -> Maybe Version -> Maybe Version -> Maybe Version -> Maybe Text -> Maybe (Id DC.Client) -> Maybe Text -> Maybe Bool -> FlowHandler MultimodalSearchResp
-multimodalSearchHandler (personId, _merchantId) req mbInitateJourney mbBundleVersion mbClientVersion mbClientConfigVersion mbRnVersion mbClientId mbDevice mbIsDashboardRequest = withFlowHandlerAPI $
+multimodalSearchHandler :: (Id Person.Person, Id Merchant.Merchant) -> DSearch.SearchReq -> Maybe Bool -> Maybe Version -> Maybe Version -> Maybe Version -> Maybe Text -> Maybe (Id DC.Client) -> Maybe Text -> Maybe Bool -> Maybe Text -> FlowHandler MultimodalSearchResp
+multimodalSearchHandler (personId, _merchantId) req mbInitateJourney mbBundleVersion mbClientVersion mbClientConfigVersion mbRnVersion mbClientId mbDevice mbIsDashboardRequest mbImeiNumber = withFlowHandlerAPI $
   withPersonIdLogTag personId $ do
     checkSearchRateLimit personId
     fork "updating person versions" $ updateVersions personId mbBundleVersion mbClientVersion mbClientConfigVersion mbRnVersion mbDevice
+    whenJust mbImeiNumber $ \imeiNumber -> do
+      encryptedImeiNumber <- encrypt imeiNumber
+      Person.updateImeiNumber (Just encryptedImeiNumber) personId
     dSearchRes <- DSearch.search personId req mbBundleVersion mbClientVersion mbClientConfigVersion mbRnVersion mbClientId mbDevice (fromMaybe False mbIsDashboardRequest) Nothing True
     riderConfig <- QRC.findByMerchantOperatingCityIdInRideFlow dSearchRes.searchRequest.merchantOperatingCityId dSearchRes.searchRequest.configInExperimentVersions >>= fromMaybeM (RiderConfigNotFound dSearchRes.searchRequest.merchantOperatingCityId.getId)
     let initateJourney = fromMaybe False mbInitateJourney
@@ -214,186 +217,129 @@ multiModalSearch searchRequest riderConfig initateJourney req' = do
   now <- getCurrentTime
   let req = DSearch.extractSearchDetails now req'
   let merchantOperatingCityId = searchRequest.merchantOperatingCityId
-  userPreferences <- DMC.getMultimodalUserPreferences (Just searchRequest.riderId, searchRequest.merchantId)
-  let permissibleModesToUse =
-        if null userPreferences.allowedTransitModes
-          then fromMaybe [] riderConfig.permissibleModes
-          else userPreferencesToGeneralVehicleTypes userPreferences.allowedTransitModes
-  let sortingType = fromMaybe DMP.FASTEST userPreferences.journeyOptionsSortingType
-  destination <- extractDest searchRequest.toLocation
-  let transitRoutesReq =
-        GetTransitRoutesReq
-          { origin = WayPointV2 {location = LocationV2 {latLng = LatLngV2 {latitude = searchRequest.fromLocation.lat, longitude = searchRequest.fromLocation.lon}}},
-            destination = WayPointV2 {location = LocationV2 {latLng = LatLngV2 {latitude = destination.lat, longitude = destination.lon}}},
-            arrivalTime = Nothing,
-            departureTime = Nothing,
-            mode = Nothing,
-            transitPreferences = Nothing,
-            transportModes = Nothing,
-            minimumWalkDistance = riderConfig.minimumWalkDistance,
-            permissibleModes = permissibleModesToUse,
-            maxAllowedPublicTransportLegs = riderConfig.maxAllowedPublicTransportLegs,
-            sortingType = convertSortingType sortingType
+  let vehicleCategory = fromMaybe BecknV2.OnDemand.Enums.BUS searchRequest.vehicleCategory
+  integratedBPPConfig <- QIntegratedBPPConfig.findByDomainAndCityAndVehicleCategory "FRFS" merchantOperatingCityId vehicleCategory (fromMaybe DIBC.MULTIMODAL req.platformType) >>= fromMaybeM (InternalError "No integrated bpp config found")
+  mbSingleModeRouteDetails <- JMU.measureLatency (JMU.getSingleModeRouteDetails searchRequest.routeCode searchRequest.originStopCode searchRequest.destinationStopCode integratedBPPConfig.id) "getSingleModeRouteDetails"
+  otpResponse <- case mbSingleModeRouteDetails of
+    Just singleModeRouteDetails -> do
+      let fromStopDetails =
+            MultiModalTypes.MultiModalStopDetails
+              { stopCode = Just singleModeRouteDetails.fromStop.stopCode,
+                platformCode = Nothing,
+                name = Just singleModeRouteDetails.fromStop.stopName,
+                gtfsId = Just singleModeRouteDetails.fromStop.stopCode
+              }
+      let toStopDetails =
+            MultiModalTypes.MultiModalStopDetails
+              { stopCode = Just singleModeRouteDetails.toStop.stopCode,
+                platformCode = Nothing,
+                name = Just singleModeRouteDetails.toStop.stopName,
+                gtfsId = Just singleModeRouteDetails.toStop.stopCode
+              }
+      let fromStopLocation = LocationV2 {latLng = LatLngV2 {latitude = singleModeRouteDetails.fromStop.stopLat, longitude = singleModeRouteDetails.fromStop.stopLon}}
+      let toStopLocation = LocationV2 {latLng = LatLngV2 {latitude = singleModeRouteDetails.toStop.stopLat, longitude = singleModeRouteDetails.toStop.stopLon}}
+      let distance = fromMaybe (Distance 0 Meter) searchRequest.distance
+      let duration = nominalDiffTimeToSeconds $ diffUTCTime singleModeRouteDetails.toStop.stopArrivalTime singleModeRouteDetails.fromStop.stopArrivalTime
+      let leg =
+            MultiModalTypes.MultiModalLeg
+              { distance = distance,
+                duration = duration,
+                polyline = Polyline {encodedPolyline = fromMaybe "" singleModeRouteDetails.route.polyline},
+                mode = castVehicleCategoryToGeneralVehicleType vehicleCategory,
+                startLocation = fromStopLocation,
+                endLocation = toStopLocation,
+                fromStopDetails = Just fromStopDetails,
+                toStopDetails = Just toStopDetails,
+                routeDetails =
+                  [ MultiModalTypes.MultiModalRouteDetails
+                      { gtfsId = Just singleModeRouteDetails.route.code,
+                        longName = Just singleModeRouteDetails.route.longName,
+                        shortName = Just singleModeRouteDetails.route.shortName,
+                        alternateShortNames = singleModeRouteDetails.availableRoutes,
+                        color = singleModeRouteDetails.route.color,
+                        fromStopDetails = Just fromStopDetails,
+                        toStopDetails = Just toStopDetails,
+                        startLocation = fromStopLocation,
+                        endLocation = toStopLocation,
+                        subLegOrder = 0,
+                        fromArrivalTime = Just singleModeRouteDetails.fromStop.stopArrivalTime,
+                        fromDepartureTime = Just singleModeRouteDetails.fromStop.stopArrivalTime,
+                        toArrivalTime = Just singleModeRouteDetails.toStop.stopArrivalTime,
+                        toDepartureTime = Just singleModeRouteDetails.toStop.stopArrivalTime
+                      }
+                  ],
+                serviceTypes = [],
+                agency = Nothing,
+                fromArrivalTime = Just singleModeRouteDetails.fromStop.stopArrivalTime,
+                fromDepartureTime = Just singleModeRouteDetails.fromStop.stopArrivalTime,
+                toArrivalTime = Just singleModeRouteDetails.toStop.stopArrivalTime,
+                toDepartureTime = Just singleModeRouteDetails.toStop.stopArrivalTime
+              }
+      return $
+        MInterface.MultiModalResponse
+          { routes =
+              [ MultiModalTypes.MultiModalRoute
+                  { distance = distance,
+                    duration = duration,
+                    startTime = Just singleModeRouteDetails.fromStop.stopArrivalTime,
+                    endTime = Just singleModeRouteDetails.toStop.stopArrivalTime,
+                    legs = [leg],
+                    relevanceScore = Nothing
+                  }
+              ]
           }
-  transitServiceReq <- TMultiModal.getTransitServiceReq searchRequest.merchantId merchantOperatingCityId
-  otpResponse' <- MultiModal.getTransitRoutes transitServiceReq transitRoutesReq >>= fromMaybeM (InternalError "routes dont exist")
-  otpResponse <- MInterface.MultiModalResponse <$> JM.filterTransitRoutes otpResponse'.routes merchantOperatingCityId
+    _ -> do
+      userPreferences <- DMC.getMultimodalUserPreferences (Just searchRequest.riderId, searchRequest.merchantId)
+      let permissibleModesToUse = if null userPreferences.allowedTransitModes then fromMaybe [] riderConfig.permissibleModes else userPreferencesToGeneralVehicleTypes userPreferences.allowedTransitModes
+      let sortingType = fromMaybe DMP.FASTEST userPreferences.journeyOptionsSortingType
+      destination <- extractDest searchRequest.toLocation
+      let transitRoutesReq =
+            GetTransitRoutesReq
+              { origin = WayPointV2 {location = LocationV2 {latLng = LatLngV2 {latitude = searchRequest.fromLocation.lat, longitude = searchRequest.fromLocation.lon}}},
+                destination = WayPointV2 {location = LocationV2 {latLng = LatLngV2 {latitude = destination.lat, longitude = destination.lon}}},
+                arrivalTime = Nothing,
+                departureTime = Nothing,
+                mode = Nothing,
+                transitPreferences = Nothing,
+                transportModes = Nothing,
+                minimumWalkDistance = riderConfig.minimumWalkDistance,
+                permissibleModes = permissibleModesToUse,
+                maxAllowedPublicTransportLegs = riderConfig.maxAllowedPublicTransportLegs,
+                sortingType = JMU.convertSortingType sortingType
+              }
+      transitServiceReq <- TMultiModal.getTransitServiceReq searchRequest.merchantId merchantOperatingCityId
+      otpResponse' <- JMU.measureLatency (MultiModal.getTransitRoutes transitServiceReq transitRoutesReq >>= fromMaybeM (InternalError "routes dont exist")) "getTransitRoutes"
+      otpResponse'' <- MInterface.MultiModalResponse <$> JM.filterTransitRoutes otpResponse'.routes merchantOperatingCityId
+      logDebug $ "[Multimodal - OTP Response]" <> show otpResponse''
+      -- Add default auto leg if no routes are found
+      if null otpResponse''.routes
+        then do
+          case searchRequest.toLocation of
+            Just toLocation -> mkAutoLeg now toLocation
+            Nothing -> return otpResponse''
+        else return otpResponse''
 
-  logDebug $ "[Multimodal - OTP Response]" <> show otpResponse
-
-  directJourney <-
-    case searchRequest.routeCode of
-      Just routeCode -> do
-        let originStopCode = searchRequest.originStopCode
-        let destinationStopCode = searchRequest.destinationStopCode
-        fullBusData <- CQMultiModal.getRoutesBuses routeCode
-        integratedBPPConfig <- maybeM (pure Nothing) (QIntegratedBPPConfig.findByDomainAndCityAndVehicleCategory "FRFS" merchantOperatingCityId BecknV2.OnDemand.Enums.BUS) (pure req.platformType)
-        route'' <- maybeM (pure Nothing) (\config -> QRoute.findByRouteCode routeCode config.id) (pure integratedBPPConfig)
-
-        -- Find the best bus with ETAs for our route
-        let mbBestBus =
-              listToMaybe
-                ( sortOn getBestBusScore $
-                    filter hasBothStops fullBusData.buses
-                )
-                >>= \bus -> Just (bus.vehicleNumber, bus.busData)
-              where
-                hasBothStops bus =
-                  case (originStopCode, destinationStopCode) of
-                    (Just origCode, Just destCode) ->
-                      any (\eta -> eta.stopId == origCode) (fromMaybe [] bus.busData.eta_data)
-                        && any (\eta -> eta.stopId == destCode) (fromMaybe [] bus.busData.eta_data)
-                    _ -> True
-
-                defaultLargeTimeDiff :: NominalDiffTime
-                defaultLargeTimeDiff = realToFrac (1000000 :: Double)
-
-                getBestBusScore bus =
-                  case (originStopCode, destinationStopCode) of
-                    (Just origCode, Just destCode) -> do
-                      let mbOrigTime = getStopArrivalTime origCode (fromMaybe [] bus.busData.eta_data)
-                      let mbDestTime = getStopArrivalTime destCode (fromMaybe [] bus.busData.eta_data)
-                      case (mbOrigTime, mbDestTime) of
-                        (Just origTime, Just _) ->
-                          abs (diffUTCTime origTime searchRequest.startTime) -- Sort by closest arrival time
-                        _ -> defaultLargeTimeDiff
-                    _ -> defaultLargeTimeDiff
-
-        let originStopTime = case (mbBestBus, originStopCode) of
-              (Just (_, busData), Just origCode) ->
-                getStopArrivalTime origCode (fromMaybe [] busData.eta_data)
-              _ -> Nothing
-        let destStopTime = case (mbBestBus, destinationStopCode) of
-              (Just (_, busData), Just destCode) ->
-                getStopArrivalTime destCode (fromMaybe [] busData.eta_data)
-              _ -> Nothing
-
-        let calculatedDuration = case (originStopTime, destStopTime) of
-              (Just origTime, Just destTime) ->
-                Seconds $ round $ diffUTCTime destTime origTime
-              _ -> Seconds $ 0
-
-        let originStopName = case (mbBestBus, originStopCode) of
-              (Just (_, busData), Just origCode) ->
-                getStopName origCode (fromMaybe [] busData.eta_data)
-              _ -> Nothing
-
-        let destStopName = case (mbBestBus, destinationStopCode) of
-              (Just (_, busData), Just destCode) ->
-                getStopName destCode (fromMaybe [] busData.eta_data)
-              _ -> Nothing
-
-        let routeDetails =
-              maybe
-                []
-                ( \route' -> do
-                    [ MultiModalTypes.MultiModalRouteDetails
-                        { gtfsId = Just routeCode,
-                          longName = Just route'.longName,
-                          shortName = Just route'.shortName,
-                          color = route'.color,
-                          frequency = Nothing,
-                          fromStopDetails =
-                            Just $
-                              MultiModalTypes.MultiModalStopDetails
-                                { stopCode = originStopCode,
-                                  platformCode = Nothing,
-                                  name = originStopName,
-                                  gtfsId = originStopCode
-                                },
-                          toStopDetails =
-                            Just $
-                              MultiModalTypes.MultiModalStopDetails
-                                { stopCode = destinationStopCode,
-                                  platformCode = Nothing,
-                                  name = destStopName,
-                                  gtfsId = destinationStopCode
-                                },
-                          startLocation = LocationV2 {latLng = LatLngV2 {latitude = searchRequest.fromLocation.lat, longitude = searchRequest.fromLocation.lon}},
-                          endLocation = LocationV2 {latLng = LatLngV2 {latitude = destination.lat, longitude = destination.lon}},
-                          subLegOrder = 0,
-                          fromArrivalTime = originStopTime,
-                          fromDepartureTime = originStopTime,
-                          toArrivalTime = destStopTime,
-                          toDepartureTime = destStopTime
-                        }
-                      ]
-                )
-                route''
-
-        departureTimeFromSource <- case originStopTime of
-          Just time -> return time
-          Nothing -> return searchRequest.startTime
-        let arrivalTimeAtDestination = destStopTime
-        let distance = fromMaybe (Distance 0 Meter) searchRequest.distance
-        toLocation <- searchRequest.toLocation & fromMaybeM (InternalError "To Location not found")
-        let leg = mkMultiModalLeg distance calculatedDuration MultiModalTypes.Bus searchRequest.fromLocation.lat searchRequest.fromLocation.lon toLocation.lat toLocation.lon departureTimeFromSource arrivalTimeAtDestination originStopCode destinationStopCode originStopName destStopName routeDetails
-
-        let directRouteInitReq =
-              JMTypes.JourneyInitData
-                { parentSearchId = searchRequest.id,
-                  merchantId = searchRequest.merchantId,
-                  merchantOperatingCityId,
-                  personId = searchRequest.riderId,
-                  legs = [leg],
-                  estimatedDistance = distance,
-                  estimatedDuration = calculatedDuration,
-                  startTime = Just searchRequest.startTime,
-                  endTime = arrivalTimeAtDestination,
-                  maximumWalkDistance = riderConfig.maximumWalkDistance
-                }
-        JM.init directRouteInitReq
-      Nothing -> pure Nothing
-
-  forM_ otpResponse.routes $ \r -> do
+  let mbFirstRoute = listToMaybe otpResponse.routes
+  whenJust mbFirstRoute $ \firstRoute -> do
     let initReq =
           JMTypes.JourneyInitData
             { parentSearchId = searchRequest.id,
               merchantId = searchRequest.merchantId,
               merchantOperatingCityId,
               personId = searchRequest.riderId,
-              legs = r.legs,
-              estimatedDistance = r.distance,
-              estimatedDuration = r.duration,
-              startTime = r.startTime,
-              endTime = r.endTime,
-              maximumWalkDistance = riderConfig.maximumWalkDistance
+              legs = firstRoute.legs,
+              estimatedDistance = firstRoute.distance,
+              estimatedDuration = firstRoute.duration,
+              startTime = firstRoute.startTime,
+              endTime = firstRoute.endTime,
+              maximumWalkDistance = riderConfig.maximumWalkDistance,
+              straightLineThreshold = riderConfig.straightLineThreshold,
+              relevanceScore = firstRoute.relevanceScore
             }
-    JM.init initReq
+    JMU.measureLatency (void $ JM.init initReq) "Multimodal Init Time"
   QSearchRequest.updateHasMultimodalSearch (Just True) searchRequest.id
   journeys <- DQuote.getJourneys searchRequest (Just True)
-  let sortedJourneys = case sortingType of
-        DMP.FASTEST -> sortRoutesByDuration <$> journeys
-        DMP.CHEAPEST -> sortRoutesByFare <$> journeys
-        DMP.MINIMUM_TRANSITS -> sortRoutesByNumberOfLegs <$> journeys
-  let sortedJourneys' = case (directJourney, sortedJourneys) of
-        (Just dj, Just js) ->
-          Just $
-            let (directJs, otherJs) = partition (\j -> j.journeyId == dj.id) js
-             in directJs <> otherJs
-        _ -> sortedJourneys
-  logDebug $ "sortedJourneys' " <> show sortedJourneys'
-  let mbFirstJourney = listToMaybe (fromMaybe [] sortedJourneys)
+  let mbFirstJourney = listToMaybe (fromMaybe [] journeys)
   firstJourneyInfo <-
     if initateJourney
       then do
@@ -403,34 +349,41 @@ multiModalSearch searchRequest riderConfig initateJourney req' = do
             return $ Just resp
           Nothing -> return Nothing
       else return Nothing
+
+  fork "Rest of the routes InIt" $ processRestOfRoutes otpResponse.routes
   return $
     MultimodalSearchResp
       { searchId = searchRequest.id,
         searchExpiry = searchRequest.validTill,
-        journeys = fromMaybe [] sortedJourneys,
+        journeys = fromMaybe [] journeys,
         firstJourney = mbFirstJourney,
         firstJourneyInfo = firstJourneyInfo
       }
   where
+    processRestOfRoutes :: [MultiModalTypes.MultiModalRoute] -> Flow ()
+    processRestOfRoutes routes = do
+      let restOfRoutes = drop 1 routes
+      forM_ restOfRoutes $ \r' -> do
+        let initReq' =
+              JMTypes.JourneyInitData
+                { parentSearchId = searchRequest.id,
+                  merchantId = searchRequest.merchantId,
+                  merchantOperatingCityId = searchRequest.merchantOperatingCityId,
+                  personId = searchRequest.riderId,
+                  legs = r'.legs,
+                  estimatedDistance = r'.distance,
+                  estimatedDuration = r'.duration,
+                  startTime = r'.startTime,
+                  endTime = r'.endTime,
+                  maximumWalkDistance = riderConfig.maximumWalkDistance,
+                  straightLineThreshold = riderConfig.straightLineThreshold,
+                  relevanceScore = r'.relevanceScore
+                }
+        JM.init initReq'
+      QSearchRequest.updateAllJourneysLoaded (Just True) searchRequest.id
+
     extractDest Nothing = throwError $ InvalidRequest "Destination is required for multimodal search"
     extractDest (Just d) = return d
-
-    getStopArrivalTime :: Text -> [CQMultiModal.BusStopETA] -> Maybe UTCTime
-    getStopArrivalTime stopId eta_data =
-      listToMaybe [eta.arrivalTime | eta <- eta_data, eta.stopId == stopId]
-
-    getStopName :: Text -> [CQMultiModal.BusStopETA] -> Maybe Text
-    getStopName stopId eta_data =
-      listToMaybe [eta.stopName | eta <- eta_data, eta.stopId == stopId]
-
-    sortRoutesByDuration :: [DQuote.JourneyData] -> [DQuote.JourneyData]
-    sortRoutesByDuration = sortBy (\j1 j2 -> fromMaybe LT (compare <$> j1.duration <*> j2.duration))
-
-    sortRoutesByNumberOfLegs :: [DQuote.JourneyData] -> [DQuote.JourneyData]
-    sortRoutesByNumberOfLegs = sortBy (\j1 j2 -> compare (length j1.journeyLegs) (length j2.journeyLegs))
-
-    sortRoutesByFare :: [DQuote.JourneyData] -> [DQuote.JourneyData]
-    sortRoutesByFare = sortBy (\j1 j2 -> compare j1.totalMaxFare.getHighPrecMoney j2.totalMaxFare.getHighPrecMoney)
 
     userPreferencesToGeneralVehicleTypes :: [DTrip.MultimodalTravelMode] -> [GeneralVehicleType]
     userPreferencesToGeneralVehicleTypes = mapMaybe allowedTransitModeToGeneralVehicleType
@@ -443,43 +396,68 @@ multiModalSearch searchRequest riderConfig initateJourney req' = do
       DTrip.Walk -> Just MultiModalTypes.Walk
       _ -> Nothing
 
-    convertSortingType :: DMP.JourneyOptionsSortingType -> SortingType
-    convertSortingType sortType = case sortType of
-      DMP.FASTEST -> Fastest
-      DMP.MINIMUM_TRANSITS -> Minimum_Transits
-      _ -> Fastest -- Default case for any other values
-    mkMultiModalLeg distance duration mode originLat originLon destLat destLon departureTimeFromSource arrivalTimeAtDestination originStopCode destinationStopCode originStopName destStopName routeDetails =
-      MultiModalTypes.MultiModalLeg
-        { distance,
-          duration,
-          polyline = Polyline {encodedPolyline = ""},
-          mode,
-          startLocation = LocationV2 {latLng = LatLngV2 {latitude = originLat, longitude = originLon}},
-          endLocation = LocationV2 {latLng = LatLngV2 {latitude = destLat, longitude = destLon}},
-          fromStopDetails =
-            Just $
-              MultiModalTypes.MultiModalStopDetails
-                { stopCode = originStopCode,
-                  platformCode = Nothing,
-                  name = originStopName,
-                  gtfsId = originStopCode
-                },
-          toStopDetails =
-            Just $
-              MultiModalTypes.MultiModalStopDetails
-                { stopCode = destinationStopCode,
-                  platformCode = Nothing,
-                  name = destStopName,
-                  gtfsId = destinationStopCode
-                },
-          routeDetails = routeDetails,
-          serviceTypes = [],
-          agency = Nothing,
-          fromArrivalTime = Just departureTimeFromSource,
-          fromDepartureTime = Just departureTimeFromSource,
-          toArrivalTime = arrivalTimeAtDestination,
-          toDepartureTime = arrivalTimeAtDestination
-        }
+    castVehicleCategoryToGeneralVehicleType :: BecknV2.OnDemand.Enums.VehicleCategory -> GeneralVehicleType
+    castVehicleCategoryToGeneralVehicleType vehicleCategory = case vehicleCategory of
+      BecknV2.OnDemand.Enums.BUS -> MultiModalTypes.Bus
+      BecknV2.OnDemand.Enums.METRO -> MultiModalTypes.MetroRail
+      BecknV2.OnDemand.Enums.SUBWAY -> MultiModalTypes.Subway
+      _ -> MultiModalTypes.Unspecified
+
+    mkAutoLeg now toLocation = do
+      let fromStopLocation = LocationV2 {latLng = LatLngV2 {latitude = searchRequest.fromLocation.lat, longitude = searchRequest.fromLocation.lon}}
+      let toStopLocation = LocationV2 {latLng = LatLngV2 {latitude = toLocation.lat, longitude = toLocation.lon}}
+      let distance = fromMaybe (Distance 0 Meter) searchRequest.distance
+      let duration = fromMaybe (Seconds 0) searchRequest.estimatedRideDuration
+      let (_, startTime) = JMU.getISTTimeInfo now
+      let endTime = addUTCTime (secondsToNominalDiffTime duration) startTime
+      let leg =
+            MultiModalTypes.MultiModalLeg
+              { distance = distance,
+                duration = duration,
+                polyline = Polyline {encodedPolyline = ""},
+                mode = MultiModalTypes.Unspecified,
+                startLocation = fromStopLocation,
+                endLocation = toStopLocation,
+                fromStopDetails = Nothing,
+                toStopDetails = Nothing,
+                routeDetails =
+                  [ MultiModalTypes.MultiModalRouteDetails
+                      { gtfsId = Nothing,
+                        longName = Nothing,
+                        shortName = Nothing,
+                        color = Nothing,
+                        alternateShortNames = [],
+                        fromStopDetails = Nothing,
+                        toStopDetails = Nothing,
+                        startLocation = fromStopLocation,
+                        endLocation = toStopLocation,
+                        subLegOrder = 0,
+                        fromArrivalTime = Just startTime,
+                        fromDepartureTime = Just startTime,
+                        toArrivalTime = Just endTime,
+                        toDepartureTime = Just endTime
+                      }
+                  ],
+                serviceTypes = [],
+                agency = Nothing,
+                fromArrivalTime = Just startTime,
+                fromDepartureTime = Just startTime,
+                toArrivalTime = Just endTime,
+                toDepartureTime = Just endTime
+              }
+      return $
+        MInterface.MultiModalResponse
+          { routes =
+              [ MultiModalTypes.MultiModalRoute
+                  { distance = distance,
+                    duration = duration,
+                    startTime = Just startTime,
+                    endTime = Just endTime,
+                    legs = [leg],
+                    relevanceScore = Nothing
+                  }
+              ]
+          }
 
 checkSearchRateLimit ::
   ( Redis.HedisFlow m r,

@@ -203,6 +203,7 @@ data GetQuotesRes = GetQuotesRes
     quotes :: [OfferRes],
     estimates :: [UEstimate.EstimateAPIEntity],
     paymentMethods :: [DMPM.PaymentMethodAPIEntity],
+    allJourneysLoaded :: Bool,
     journey :: Maybe [JourneyData]
   }
   deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
@@ -216,7 +217,8 @@ data JourneyData = JourneyData
     startTime :: Maybe UTCTime,
     endTime :: Maybe UTCTime,
     journeyId :: Id DJ.Journey,
-    journeyLegs :: [JourneyLeg]
+    journeyLegs :: [JourneyLeg],
+    relevanceScore :: Double
   }
   deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
 
@@ -240,6 +242,7 @@ data RouteDetail = RouteDetail
   { routeCode :: Maybe Text,
     fromStationCode :: Maybe Text,
     toStationCode :: Maybe Text,
+    alternateShortNames :: [Text],
     color :: Maybe Text,
     colorCode :: Maybe Text,
     fromStationLatLong :: LatLong,
@@ -292,6 +295,7 @@ getQuotes searchRequestId mbAllowMultiple = do
           quotes = offers,
           estimates,
           paymentMethods = [],
+          allJourneysLoaded = fromMaybe False searchRequest.allJourneysLoaded,
           journey = journeyData
         }
 
@@ -415,14 +419,15 @@ getJourneys searchRequest hasMultimodalSearch = do
               { totalMinFare = estimatedMinFare,
                 totalMaxFare = estimatedMaxFare,
                 modes = journey.modes,
-                journeyLegs = sortBy (comparing (.journeyLegOrder)) journeyLegs,
+                journeyLegs = sortOn (.journeyLegOrder) journeyLegs,
                 startTime = journey.startTime,
                 endTime = journey.endTime,
                 journeyId = journey.id,
                 duration = journey.estimatedDuration,
-                distance = journey.estimatedDistance
+                distance = journey.estimatedDistance,
+                relevanceScore = fromMaybe 1 journey.relevanceScore -- 1 is the max possible score.
               }
-      return $ Just journeyData
+      return . Just $ sortOn (.relevanceScore) journeyData
     _ -> return Nothing
   where
     mkRouteDetail :: MultiModalRouteDetails -> RouteDetail
@@ -433,6 +438,7 @@ getJourneys searchRequest hasMultimodalSearch = do
           toStationCode = gtfsIdtoDomainCode <$> (routeDetail.toStopDetails >>= (.gtfsId)),
           color = routeDetail.shortName,
           colorCode = routeDetail.shortName,
+          alternateShortNames = routeDetail.alternateShortNames,
           fromStationLatLong =
             LatLong
               { lat = routeDetail.startLocation.latLng.latitude,

@@ -44,18 +44,39 @@ instance ToJSON SaveMobTicketReq where
   toJSON = genericToJSON $ defaultOptions {fieldLabelModifier = camelCaseToScreamingSnakeCase}
 
 data SaveMobTicketRes = SaveMobTicketRes
-  { mbTktId :: Integer
+  { _data :: SaveMobileTicket
   }
   deriving (Generic)
 
 instance FromJSON SaveMobTicketRes where
-  parseJSON = genericParseJSON $ defaultOptions {fieldLabelModifier = camelCaseToScreamingSnakeCase}
+  parseJSON = genericParseJSON saveMobileTicketJsonOptions
 
 instance ToJSON SaveMobTicketRes where
-  toJSON = genericToJSON $ defaultOptions {fieldLabelModifier = camelCaseToScreamingSnakeCase}
+  toJSON = genericToJSON saveMobileTicketJsonOptions
+
+data SaveMobileTicket = SaveMobileTicket
+  { mbTktId :: Text
+  }
+  deriving (Generic)
+
+instance FromJSON SaveMobileTicket where
+  parseJSON = genericParseJSON saveMobileTicketJsonOptions
+
+instance ToJSON SaveMobileTicket where
+  toJSON = genericToJSON saveMobileTicketJsonOptions
+
+saveMobileTicketJsonOptions :: Options
+saveMobileTicketJsonOptions =
+  defaultOptions
+    { fieldLabelModifier = \case
+        "_data" -> "DATA"
+        "mbTktId" -> "MB_TKT_ID"
+        a -> a
+    }
 
 type SaveMobTicketAPI =
   "Api"
+    :> "V2"
     :> "Cons"
     :> "SaveMobTicket"
     :> Header "Authorization" Text
@@ -133,11 +154,12 @@ getTicketDetail config integrationBPPConfigId qrTtl booking routeStation = do
   ticketOder <-
     callAPI config.networkHostUrl (ET.client saveMobTicketAPI (Just token) ticketReq) "saveMobTicket" saveMobTicketAPI
       >>= fromEitherM (ExternalAPICallError (Just "UNABLE_TO_CALL_SAVE_MOB_TICKET_API") config.networkHostUrl)
-  let ticket = fromRoute.providerCode <> "," <> toRoute.providerCode <> "," <> show adultQuantity <> "," <> show childQuantity <> "," <> busTypeId <> "," <> (T.pack $ formatTime Time.defaultTimeLocale "%d-%m-%Y %H:%M:%S" qrValidityIST) <> "," <> ticketNumber <> "," <> show amount <> "," <> config.agentId <> ",,,,," <> show ticketOder.mbTktId <> ",,,"
+  let ticket = fromRoute.providerCode <> "," <> toRoute.providerCode <> "," <> show adultQuantity <> "," <> show childQuantity <> "," <> busTypeId <> "," <> (T.pack $ formatTime Time.defaultTimeLocale "%d-%m-%Y %H:%M:%S" qrValidityIST) <> "," <> ticketNumber <> "," <> show amount <> "," <> config.agentId <> ",,,,," <> ticketOder._data.mbTktId <> ",,,"
   qrData <- generateQR config ticket
   return $
     ProviderTicket
       { ticketNumber = ticketNumber,
+        vehicleNumber = Nothing,
         qrData,
         qrStatus = "UNCLAIMED",
         qrValidity,

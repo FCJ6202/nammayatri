@@ -1,5 +1,6 @@
 module Lib.JourneyLeg.Interface where
 
+import API.Types.UI.MultimodalConfirm
 import Domain.Types.FRFSRouteDetails
 import qualified Domain.Types.Merchant as DM
 import Domain.Types.MerchantOperatingCity as DMOC
@@ -70,7 +71,6 @@ getFare riderId merchantId merchantOperatingCityId leg = \case
       merchant <- QMerchant.findById merchantId >>= fromMaybeM (MerchantDoesNotExist merchantId.getId)
       merchantOpCity <- CQMOC.findById merchantOperatingCityId >>= fromMaybeM (MerchantOperatingCityNotFound merchantOperatingCityId.getId)
       let routeDetails = catMaybes $ map mkRouteDetails leg.routeDetails
-      serviceTypes <- mapM (JL.getServiceTypeFromProviderCode merchantOperatingCityId) leg.serviceTypes
       if length routeDetails /= length leg.routeDetails
         then do
           logError "Unable to Map Route Details for all Bus Route Sub Legs"
@@ -82,7 +82,6 @@ getFare riderId merchantId merchantOperatingCityId leg = \case
                 BusLegRequestGetFareData
                   { startLocation = leg.startLocation.latLng,
                     endLocation = leg.endLocation.latLng,
-                    serviceTypes,
                     ..
                   }
 
@@ -139,8 +138,8 @@ getFare riderId merchantId merchantOperatingCityId leg = \case
               Just $ FRFSRouteDetails {routeCode = Just routeCode, ..}
             _ -> Nothing
 
-confirm :: JL.ConfirmFlow m r c => Bool -> Maybe Int -> JL.LegInfo -> m ()
-confirm forcedBooked ticketQuantity JL.LegInfo {..} =
+confirm :: JL.ConfirmFlow m r c => Bool -> Maybe Int -> JL.LegInfo -> Maybe CrisSdkResponse -> m ()
+confirm forcedBooked ticketQuantity JL.LegInfo {..} crisSdkResponse =
   case travelMode of
     DTrip.Taxi -> do
       confirmReq :: TaxiLegRequest <- mkTaxiLegConfirmReq
@@ -197,6 +196,7 @@ confirm forcedBooked ticketQuantity JL.LegInfo {..} =
               personId,
               merchantId,
               merchantOperatingCityId,
+              crisSdkResponse,
               quantity = ticketQuantity
             }
     mkBusLegConfirmReq :: JL.ConfirmFlow m r c => m BusLegRequest

@@ -11,7 +11,6 @@ import qualified Domain.Types.Journey
 import qualified Domain.Types.Location
 import qualified Domain.Types.LocationAddress
 import qualified Domain.Types.MultimodalPreferences
-import qualified Domain.Types.RouteStopMapping
 import qualified Domain.Types.Trip
 import EulerHS.Prelude hiding (id)
 import qualified Kernel.External.Maps.Google.MapsClient.Types
@@ -22,8 +21,13 @@ import qualified Kernel.Types.Common
 import qualified Kernel.Types.Id
 import qualified Lib.JourneyLeg.Types
 import qualified Lib.JourneyModule.Types
+import qualified Lib.JourneyModule.Utils
 import Servant
 import Tools.Auth
+
+data CrisSdkResponse = CrisSdkResponse {bookAuthCode :: Kernel.Prelude.Text, osBuildVersion :: Kernel.Prelude.Text, osType :: Kernel.Prelude.Text}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 data ExtendLegGetFareReq = ExtendLegGetFareReq {endLocation :: Kernel.Prelude.Maybe Domain.Types.Location.LocationAPIEntity, startLocation :: Lib.JourneyModule.Types.ExtendLegStartPoint}
   deriving stock (Generic)
@@ -57,7 +61,12 @@ data JourneyConfirmReq = JourneyConfirmReq {journeyConfirmReqElements :: [Journe
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
-data JourneyConfirmReqElement = JourneyConfirmReqElement {journeyLegOrder :: Kernel.Prelude.Int, skipBooking :: Kernel.Prelude.Bool, ticketQuantity :: Kernel.Prelude.Maybe Kernel.Prelude.Int}
+data JourneyConfirmReqElement = JourneyConfirmReqElement
+  { crisSdkResponse :: Kernel.Prelude.Maybe CrisSdkResponse,
+    journeyLegOrder :: Kernel.Prelude.Int,
+    skipBooking :: Kernel.Prelude.Bool,
+    ticketQuantity :: Kernel.Prelude.Maybe Kernel.Prelude.Int
+  }
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
@@ -84,16 +93,17 @@ data JourneyStatusResp = JourneyStatusResp {journeyPaymentStatus :: Kernel.Prelu
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
+data LegServiceTierOptionsResp = LegServiceTierOptionsResp {options :: [Lib.JourneyModule.Utils.AvailableRoutesByTier]}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
 data LegStatus = LegStatus
   { legOrder :: Kernel.Prelude.Int,
     mode :: Domain.Types.Trip.MultimodalTravelMode,
-    nextStop :: Kernel.Prelude.Maybe Domain.Types.RouteStopMapping.RouteStopMapping,
-    nextStopTravelDistance :: Kernel.Prelude.Maybe Kernel.Types.Common.Meters,
-    nextStopTravelTime :: Kernel.Prelude.Maybe Kernel.Types.Common.Seconds,
     status :: Lib.JourneyLeg.Types.JourneyLegStatus,
     subLegOrder :: Kernel.Prelude.Int,
     userPosition :: Kernel.Prelude.Maybe Kernel.External.Maps.Types.LatLong,
-    vehiclePosition :: Kernel.Prelude.Maybe Kernel.External.Maps.Types.LatLong
+    vehiclePositions :: [Lib.JourneyModule.Types.VehiclePosition]
   }
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -166,5 +176,13 @@ data TransportStation = TransportStation
     nm :: Kernel.Prelude.Text,
     vt :: Kernel.Prelude.Text
   }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data UpdatePaymentOrderReq = UpdatePaymentOrderReq {amount :: Kernel.Types.Common.HighPrecMoney}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data UpdatePaymentOrderResp = UpdatePaymentOrderResp {sdkPayload :: Kernel.Prelude.Maybe Kernel.External.Payment.Juspay.Types.SDKPayloadDetails}
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)

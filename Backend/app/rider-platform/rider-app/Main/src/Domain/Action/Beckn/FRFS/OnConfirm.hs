@@ -233,7 +233,7 @@ mkTicket :: Booking.FRFSTicketBooking -> DTicket -> Bool -> Flow Ticket.FRFSTick
 mkTicket booking dTicket isTicketFree = do
   now <- getCurrentTime
   ticketId <- generateGUID
-  (_, status_) <- Utils.getTicketStatus booking dTicket
+  (_, status_, vehicleNumber) <- Utils.getTicketStatus booking dTicket
   processedQrData <- processQRData dTicket.qrData
   return
     Ticket.FRFSTicket
@@ -244,6 +244,7 @@ mkTicket booking dTicket isTicketFree = do
         Ticket.qrRefreshAt = dTicket.qrRefreshAt,
         Ticket.riderId = booking.riderId,
         Ticket.status = status_,
+        Ticket.scannedByVehicleNumber = vehicleNumber,
         Ticket.ticketNumber = dTicket.ticketNumber,
         Ticket.validTill = dTicket.validTill,
         Ticket.merchantId = booking.merchantId,
@@ -318,6 +319,8 @@ mkTransitObjects pOrgId booking ticket person serviceAccount className sortIndex
   mbToStationPartnerOrg <- CQPOS.findByStationIdAndPOrgId toStation.id pOrgId
   let toStationGMMLocationId = maybe (toStation.id.getId) (\pOrgStation -> pOrgStation.partnerOrgStationId.getId) mbToStationPartnerOrg
   let groupingInfo = TC.GroupingInfo {TC.groupingId = "Group." <> booking.id.getId, TC.sortIndex = sortIndex}
+  let customCardTitleValue = GWSA.getCustomCardTitleValueByTripType tripType'
+  let customCardTitle = TC.Name {TC.defaultValue = TC.LanguageValue {TC.language = "en-US", TC._value = customCardTitleValue}}
   return
     TC.TransitObject
       { TC.id = serviceAccount.saIssuerId <> "." <> ticket.id.getId,
@@ -325,6 +328,7 @@ mkTransitObjects pOrgId booking ticket person serviceAccount className sortIndex
         TC.tripId = booking.id.getId,
         TC.state = show GWSA.ACTIVE,
         TC.tripType = show tripType',
+        TC.customCardTitle = customCardTitle,
         TC.passengerType = show GWSA.SINGLE_PASSENGER,
         TC.passengerNames = passengerName',
         TC.ticketLeg =

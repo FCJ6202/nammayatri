@@ -620,7 +620,7 @@ getDriverClearStuckOnRide merchantShortId _ dbSyncTime = do
     mapM
       ( \dI -> do
           updateOnRideStatusWithAdvancedRideCheck (cast dI.driverInfo.driverId) (Just dI.ride)
-          void $ LF.rideDetails dI.ride.id SRide.CANCELLED merchant.id dI.ride.driverId dI.ride.fromLocation.lat dI.ride.fromLocation.lon Nothing (Just $ (LT.Car $ LT.CarRideInfo {pickupLocation = LatLong (dI.ride.fromLocation.lat) (dI.ride.fromLocation.lon)}))
+          void $ LF.rideDetails dI.ride.id SRide.CANCELLED merchant.id dI.ride.driverId dI.ride.fromLocation.lat dI.ride.fromLocation.lon Nothing (Just $ (LT.Car $ LT.CarRideInfo {pickupLocation = LatLong (dI.ride.fromLocation.lat) (dI.ride.fromLocation.lon), minDistanceBetweenTwoPoints = Nothing}))
           return (cast dI.driverInfo.driverId)
       )
       driverInfosAndRideDetails
@@ -1116,19 +1116,19 @@ postDriverBulkSubscriptionServiceUpdate merchantShortId _opCity req = do
   return Success
 
 getDriverStats :: ShortId DM.Merchant -> Context.City -> Maybe (Id Common.Driver) -> Maybe Day -> Maybe Day -> Text -> Flow Common.DriverStatsRes
-getDriverStats merchantShortId opCity mbEntityId mbFromDate mbToDate requestedEntityId = do
+getDriverStats merchantShortId opCity mbEntityId mbFromDate mbToDate requestorId = do
   merchant <- findMerchantByShortId merchantShortId
   merchantOpCityId <- CQMOC.getMerchantOpCityId Nothing merchant (Just opCity)
 
   whenJust mbEntityId $ \e_Id -> do
     let entityId = cast @Common.Driver @DP.Person e_Id
-    when (entityId.getId /= requestedEntityId) $ do
-      entities <- QPerson.findAllByPersonIdsAndMerchantOpsCityId [Id requestedEntityId, entityId] merchantOpCityId
-      when (length entities /= 2) $ throwError (PersonDoesNotExist (requestedEntityId <> " or " <> entityId.getId))
+    when (entityId.getId /= requestorId) $ do
+      entities <- QPerson.findAllByPersonIdsAndMerchantOpsCityId [Id requestorId, entityId] merchantOpCityId
+      when (length entities /= 2) $ throwError (PersonDoesNotExist (requestorId <> " or " <> entityId.getId))
       isValid <- validatePersonAccessAndAssociation entities
       unless isValid $ throwError AccessDenied
 
-  let personId = cast @Common.Driver @DP.Person $ fromMaybe (Id requestedEntityId) mbEntityId
+  let personId = cast @Common.Driver @DP.Person $ fromMaybe (Id requestorId) mbEntityId
   findOnboardedDriversOrFleets personId merchantOpCityId mbFromDate mbToDate
   where
     -- TODO: Need to implement clickhouse aggregated query to fetch data for the given date range

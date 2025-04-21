@@ -21,11 +21,14 @@ create = createWithKV
 createMany :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => ([Domain.Types.FleetMemberAssociation.FleetMemberAssociation] -> m ())
 createMany = traverse_ create
 
-findAllActiveByfleetMemberId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> Kernel.Prelude.Bool -> m ([Domain.Types.FleetMemberAssociation.FleetMemberAssociation]))
+findAllActiveByfleetMemberId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> Kernel.Prelude.Bool -> m [Domain.Types.FleetMemberAssociation.FleetMemberAssociation])
 findAllActiveByfleetMemberId fleetMemberId enabled = do findAllWithKV [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId, Se.Is Beam.enabled $ Se.Eq enabled]]
 
-findAllByfleetMemberId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> m ([Domain.Types.FleetMemberAssociation.FleetMemberAssociation]))
+findAllByfleetMemberId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> m [Domain.Types.FleetMemberAssociation.FleetMemberAssociation])
 findAllByfleetMemberId fleetMemberId = do findAllWithKV [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId]]
+
+findOneByFleetOwnerId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> Kernel.Prelude.Bool -> m (Maybe Domain.Types.FleetMemberAssociation.FleetMemberAssociation))
+findOneByFleetOwnerId fleetOwnerId isFleetOwner = do findOneWithKV [Se.And [Se.Is Beam.fleetOwnerId $ Se.Eq fleetOwnerId, Se.Is Beam.isFleetOwner $ Se.Eq isFleetOwner]]
 
 updateFleetMemberActiveStatus :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Bool -> Kernel.Prelude.Text -> Kernel.Prelude.Text -> m ())
 updateFleetMemberActiveStatus enabled fleetMemberId fleetOwnerId = do
@@ -35,7 +38,7 @@ updateFleetMemberActiveStatus enabled fleetMemberId fleetOwnerId = do
 updateFleetMembersActiveStatus :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Bool -> Kernel.Prelude.Text -> [Kernel.Prelude.Text] -> m ())
 updateFleetMembersActiveStatus enabled fleetMemberId fleetOwnerId = do
   _now <- getCurrentTime
-  updateOneWithKV [Se.Set Beam.enabled enabled, Se.Set Beam.updatedAt _now] [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId, Se.Is Beam.fleetOwnerId $ Se.In fleetOwnerId]]
+  updateWithKV [Se.Set Beam.enabled enabled, Se.Set Beam.updatedAt _now] [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId, Se.Is Beam.fleetOwnerId $ Se.In fleetOwnerId]]
 
 findByPrimaryKey :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => (Kernel.Prelude.Text -> m (Maybe Domain.Types.FleetMemberAssociation.FleetMemberAssociation))
 findByPrimaryKey fleetMemberId = do findOneWithKV [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId]]
@@ -47,6 +50,7 @@ updateByPrimaryKey (Domain.Types.FleetMemberAssociation.FleetMemberAssociation {
     [ Se.Set Beam.createdAt createdAt,
       Se.Set Beam.enabled enabled,
       Se.Set Beam.fleetOwnerId fleetOwnerId,
+      Se.Set Beam.isFleetOwner isFleetOwner,
       Se.Set Beam.updatedAt _now
     ]
     [Se.And [Se.Is Beam.fleetMemberId $ Se.Eq fleetMemberId]]

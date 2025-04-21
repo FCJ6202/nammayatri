@@ -21,6 +21,7 @@ import qualified ExternalBPP.ExternalAPI.Metro.CMRL.Order as CMRLOrder
 import qualified ExternalBPP.ExternalAPI.Metro.CMRL.PassengerViewStatus as CMRLPassengerViewStatus
 import qualified ExternalBPP.ExternalAPI.Metro.CMRL.StationList as CMRLStationList
 import qualified ExternalBPP.ExternalAPI.Metro.CMRL.TicketStatus as CMRLStatus
+import qualified ExternalBPP.ExternalAPI.Subway.CRIS.BookJourney as CRISBookJourney
 import qualified ExternalBPP.ExternalAPI.Subway.CRIS.RouteFare as CRISRouteFare
 import ExternalBPP.ExternalAPI.Types
 import Kernel.External.Encryption
@@ -63,30 +64,28 @@ getFares riderId merchant merchanOperatingCity integrationBPPConfig routeCode st
       sessionId <- getRandomInRange (1, 1000000 :: Int) -- TODO: Fix it later
       let request =
             CRISRouteFare.CRISFareRequest
-              { mobileNo = fromMaybe "9999999999" mbMobileNumber,
+              { mobileNo = mbMobileNumber,
                 imeiNo = fromMaybe "ed409d8d764c04f7" mbImeiNumber,
                 appSession = sessionId,
                 sourceCode = startStopCode,
-                changeOver = " ", -- TODO: Make it dynamic
+                changeOver = " ",
                 destCode = endStopCode,
-                ticketType = "J", -- TODO: Make it dynamic
-                via = " ", -- TODO: Make it dynamic
-                trainType = Nothing,
-                routeId = routeCode
+                via = " "
               }
       resp <- try @_ @SomeException $ CRISRouteFare.getRouteFare config' merchanOperatingCity.id request
       case resp of
         Left err -> do
           logError $ "Error while calling CRIS API: " <> show err
-          return $ -- Fallback to 0 fare
+          return $ -- Fallback to 5 fare
             [ FRFSUtils.FRFSFare
                 { price =
                     Price
-                      { amountInt = 0,
-                        amount = 0,
+                      { amountInt = 5, -- default fare
+                        amount = 5,
                         currency = INR
                       },
                   discounts = [],
+                  fareDetails = Nothing,
                   vehicleServiceTier =
                     FRFSUtils.FRFSVehicleServiceTier
                       { serviceTierType = Spec.ORDINARY,
@@ -106,6 +105,7 @@ createOrder integrationBPPConfig qrTtl (_mRiderName, mRiderNumber) booking = do
     CMRL config' -> CMRLOrder.createOrder config' booking mRiderNumber
     EBIX config' -> EBIXOrder.createOrder config' integrationBPPConfig.id qrTtl booking
     DIRECT config' -> DIRECTOrder.createOrder config' integrationBPPConfig.id qrTtl booking
+    CRIS config' -> CRISBookJourney.createOrder config' booking
     _ -> throwError $ InternalError "Unimplemented!"
 
 getTicketStatus :: (MonadTime m, MonadFlow m, CacheFlow m r, EsqDBFlow m r, EncFlow m r) => IntegratedBPPConfig -> FRFSTicketBooking -> m [ProviderTicket]

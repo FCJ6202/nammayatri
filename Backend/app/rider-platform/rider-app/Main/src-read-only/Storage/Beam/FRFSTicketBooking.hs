@@ -17,6 +17,7 @@ import Tools.Beam.UtilsTH
 
 data FRFSTicketBookingT f = FRFSTicketBookingT
   { _type :: B.C f Domain.Types.FRFSQuote.FRFSQuoteType,
+    bookingAuthCode :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     bppBankAccountNumber :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     bppBankCode :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     bppDelayedInterest :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Int),
@@ -47,6 +48,8 @@ data FRFSTicketBookingT f = FRFSTicketBookingT
     journeyOnInitDone :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Bool),
     merchantId :: B.C f Kernel.Prelude.Text,
     merchantOperatingCityId :: B.C f Kernel.Prelude.Text,
+    osBuildVersion :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
+    osType :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     partnerOrgId :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     partnerOrgTransactionId :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),
     payerVpa :: B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text),

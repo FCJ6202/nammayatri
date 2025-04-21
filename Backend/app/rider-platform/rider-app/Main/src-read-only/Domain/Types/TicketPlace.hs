@@ -29,13 +29,14 @@ data TicketPlace = TicketPlace
     status :: Domain.Types.TicketPlace.PlaceStatus,
     termsAndConditions :: [Kernel.Prelude.Text],
     termsAndConditionsUrl :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    ticketMerchantId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
     merchantId :: Kernel.Prelude.Maybe (Kernel.Types.Id.Id Domain.Types.Merchant.Merchant),
     createdAt :: Kernel.Prelude.UTCTime,
     updatedAt :: Kernel.Prelude.UTCTime
   }
   deriving (Generic, Show, ToJSON, FromJSON, ToSchema)
 
-data PlaceStatus = Active | Inactive | ComingSoon deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema)
+data PlaceStatus = Active | Inactive | ComingSoon | Ended deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema)
 
 data PlaceType
   = Museum

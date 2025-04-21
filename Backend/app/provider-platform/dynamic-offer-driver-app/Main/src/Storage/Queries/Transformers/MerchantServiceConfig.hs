@@ -40,8 +40,10 @@ getConfigJSON = \case
     Sms.MyValueFirstConfig cfg -> toJSON cfg
     Sms.GupShupConfig cfg -> toJSON cfg
     Sms.TwillioSmsConfig cfg -> toJSON cfg
+    Sms.DigoEngageSmsConfig cfg -> toJSON cfg
   Domain.WhatsappServiceConfig whatsappCfg -> case whatsappCfg of
     Whatsapp.GupShupConfig cfg -> toJSON cfg
+    Whatsapp.TataCommunicationsConfig cfg -> toJSON cfg
   Domain.VerificationServiceConfig verificationCfg -> case verificationCfg of
     Verification.IdfyConfig cfg -> toJSON cfg
     Verification.FaceVerificationConfig cfg -> toJSON cfg
@@ -53,6 +55,7 @@ getConfigJSON = \case
   Domain.CallServiceConfig callCfg -> case callCfg of
     Call.ExotelConfig cfg -> toJSON cfg
     Call.TwillioCallConfig cfg -> toJSON cfg
+    Call.TataClickToCallConfig cfg -> toJSON cfg
   Domain.AadhaarVerificationServiceConfig aadhaarVerificationCfg -> case aadhaarVerificationCfg of
     AadhaarVerification.GridlineConfig cfg -> toJSON cfg
   Domain.PaymentServiceConfig paymentCfg -> case paymentCfg of
@@ -100,8 +103,10 @@ getServiceName = \case
     Sms.MyValueFirstConfig _ -> Domain.SmsService Sms.MyValueFirst
     Sms.GupShupConfig _ -> Domain.SmsService Sms.GupShup
     Sms.TwillioSmsConfig _ -> Domain.SmsService Sms.TwillioSms
+    Sms.DigoEngageSmsConfig _ -> Domain.SmsService Sms.DigoEngage
   Domain.WhatsappServiceConfig whatsappCfg -> case whatsappCfg of
     Whatsapp.GupShupConfig _ -> Domain.WhatsappService Whatsapp.GupShup
+    Whatsapp.TataCommunicationsConfig _ -> Domain.WhatsappService Whatsapp.TataCommunications
   Domain.VerificationServiceConfig verificationCfg -> case verificationCfg of
     Verification.IdfyConfig _ -> Domain.VerificationService Verification.Idfy
     Verification.FaceVerificationConfig _ -> Domain.VerificationService Verification.InternalScripts
@@ -113,6 +118,7 @@ getServiceName = \case
   Domain.CallServiceConfig callCfg -> case callCfg of
     Call.ExotelConfig _ -> Domain.CallService Call.Exotel
     Call.TwillioCallConfig _ -> Domain.CallService Call.TwillioCall
+    Call.TataClickToCallConfig _ -> Domain.CallService Call.TataClickToCall
   Domain.AadhaarVerificationServiceConfig aadhaarVerificationCfg -> case aadhaarVerificationCfg of
     AadhaarVerification.GridlineConfig _ -> Domain.AadhaarVerificationService AadhaarVerification.Gridline
   Domain.PaymentServiceConfig paymentCfg -> case paymentCfg of
@@ -159,7 +165,9 @@ mkServiceConfig configJSON serviceName = either (\err -> throwError $ InternalEr
   Domain.SmsService Sms.MyValueFirst -> Domain.SmsServiceConfig . Sms.MyValueFirstConfig <$> eitherValue configJSON
   Domain.SmsService Sms.GupShup -> Domain.SmsServiceConfig . Sms.GupShupConfig <$> eitherValue configJSON
   Domain.SmsService Sms.TwillioSms -> Domain.SmsServiceConfig . Sms.TwillioSmsConfig <$> eitherValue configJSON
+  Domain.SmsService Sms.DigoEngage -> Domain.SmsServiceConfig . Sms.DigoEngageSmsConfig <$> eitherValue configJSON
   Domain.WhatsappService Whatsapp.GupShup -> Domain.WhatsappServiceConfig . Whatsapp.GupShupConfig <$> eitherValue configJSON
+  Domain.WhatsappService Whatsapp.TataCommunications -> Domain.WhatsappServiceConfig . Whatsapp.TataCommunicationsConfig <$> eitherValue configJSON
   Domain.VerificationService Verification.Idfy -> Domain.VerificationServiceConfig . Verification.IdfyConfig <$> eitherValue configJSON
   Domain.VerificationService Verification.InternalScripts -> Domain.VerificationServiceConfig . Verification.FaceVerificationConfig <$> eitherValue configJSON
   Domain.VerificationService Verification.GovtData -> Right $ Domain.VerificationServiceConfig Verification.GovtDataConfig
@@ -168,6 +176,7 @@ mkServiceConfig configJSON serviceName = either (\err -> throwError $ InternalEr
   Domain.DriverBackgroundVerificationService Verification.SafetyPortal -> Domain.DriverBackgroundVerificationServiceConfig . Verification.SafetyPortalConfig <$> eitherValue configJSON
   Domain.CallService Call.Exotel -> Domain.CallServiceConfig . Call.ExotelConfig <$> eitherValue configJSON
   Domain.CallService Call.TwillioCall -> Domain.CallServiceConfig . Call.TwillioCallConfig <$> eitherValue configJSON
+  Domain.CallService Call.TataClickToCall -> Domain.CallServiceConfig . Call.TataClickToCallConfig <$> eitherValue configJSON
   Domain.CallService Call.Knowlarity -> Left "No Config Found For Knowlarity."
   Domain.AadhaarVerificationService AadhaarVerification.Gridline -> Domain.AadhaarVerificationServiceConfig . AadhaarVerification.GridlineConfig <$> eitherValue configJSON
   Domain.PaymentService Payment.Juspay -> Domain.PaymentServiceConfig . Payment.JuspayConfig <$> eitherValue configJSON

@@ -71,6 +71,11 @@ updateVehicleVariant (Id vehicleRegistrationCertificateId) variant reviewDone re
     )
     [Se.Is BeamVRC.id (Se.Eq vehicleRegistrationCertificateId)]
 
+findByRC :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => EncryptedHashedField 'AsEncrypted Text -> m (Maybe VehicleRegistrationCertificate)
+findByRC certNumber = do
+  let certNumberHash = certNumber & (.hash)
+  findOneWithKV [Se.Is BeamVRC.certificateNumberHash $ Se.Eq certNumberHash]
+
 findByRCAndExpiry :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => EncryptedHashedField 'AsEncrypted Text -> UTCTime -> m (Maybe VehicleRegistrationCertificate)
 findByRCAndExpiry certNumber expiry = do
   let certNumberHash = certNumber & (.hash)
@@ -127,9 +132,10 @@ findByCertificateNumberHash certificateHash = do
   findOneWithKV
     [Se.Is BeamVRC.certificateNumberHash $ Se.Eq certificateHash]
 
-findAllRCByStatusForFleet :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => Text -> Maybe Documents.VerificationStatus -> Integer -> Integer -> Id Merchant.Merchant -> m [VehicleRegistrationCertificate]
-findAllRCByStatusForFleet fleetOwnerId status limitVal offsetVal (Id merchantId') = do
+findAllRCByStatusForFleet :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r, EncFlow m r) => Text -> Maybe Documents.VerificationStatus -> Integer -> Integer -> Id Merchant.Merchant -> Maybe Text -> m [VehicleRegistrationCertificate]
+findAllRCByStatusForFleet fleetOwnerId status limitVal offsetVal (Id merchantId') statusAwareVehicleNo = do
   dbConf <- getReplicaBeamConfig
+  statusAwareVehicleNoHash <- mapM getDbHash statusAwareVehicleNo
   res <-
     L.runDB dbConf $
       L.findRows $
@@ -142,6 +148,9 @@ findAllRCByStatusForFleet fleetOwnerId status limitVal offsetVal (Id merchantId'
                       rc.merchantId B.==?. B.val_ (Just merchantId')
                         B.&&?. rc.fleetOwnerId B.==?. B.val_ (Just fleetOwnerId)
                         B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\s -> rc.verificationStatus B.==?. B.val_ s) status
+                        B.&&?. ( maybe (B.sqlBool_ $ B.val_ True) (\cNum -> B.sqlBool_ $ B.like_ (B.lower_ (B.coalesce_ [rc.unencryptedCertificateNumber] (B.val_ ""))) (B.val_ ("%" <> toLower cNum <> "%"))) statusAwareVehicleNo
+                                   B.||?. maybe (B.sqlBool_ $ B.val_ True) (\cNum -> rc.certificateNumberHash B.==?. B.val_ cNum) statusAwareVehicleNoHash
+                               )
                   )
                   do
                     rc <- B.all_ (BeamCommon.vehicleRegistrationCertificate BeamCommon.atlasDB)
@@ -151,11 +160,12 @@ findAllRCByStatusForFleet fleetOwnerId status limitVal offsetVal (Id merchantId'
       catMaybes <$> mapM fromTType' res'
     Left _ -> pure []
 
-findAllInactiveRCForFleet :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => Text -> Integer -> Integer -> Id Merchant.Merchant -> m [VehicleRegistrationCertificate]
-findAllInactiveRCForFleet fleetOwnerId limitVal offsetVal merchantId = do
+findAllInactiveRCForFleet :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r, EncFlow m r) => Text -> Integer -> Integer -> Id Merchant.Merchant -> Maybe Text -> m [VehicleRegistrationCertificate]
+findAllInactiveRCForFleet fleetOwnerId limitVal offsetVal merchantId statusAwareVehicleNo = do
   dbConf <- getReplicaBeamConfig
   allActiveRCs <- findAllActiveRCForFleet fleetOwnerId merchantId
   let allActiveRCIds = map (.id.getId) allActiveRCs
+  statusAwareVehicleNoHash <- mapM getDbHash statusAwareVehicleNo
   res <-
     L.runDB dbConf $
       L.findRows $
@@ -168,6 +178,9 @@ findAllInactiveRCForFleet fleetOwnerId limitVal offsetVal merchantId = do
                       rc.merchantId B.==?. B.val_ (Just merchantId.getId)
                         B.&&?. rc.fleetOwnerId B.==?. B.val_ (Just fleetOwnerId)
                         B.&&?. B.sqlBool_ (B.not_ (rc.id `B.in_` (B.val_ <$> allActiveRCIds)))
+                        B.&&?. ( maybe (B.sqlBool_ $ B.val_ True) (\cNum -> B.sqlBool_ $ B.like_ (B.lower_ (B.coalesce_ [rc.unencryptedCertificateNumber] (B.val_ ""))) (B.val_ ("%" <> toLower cNum <> "%"))) statusAwareVehicleNo
+                                   B.||?. maybe (B.sqlBool_ $ B.val_ True) (\cNum -> rc.certificateNumberHash B.==?. B.val_ cNum) statusAwareVehicleNoHash
+                               )
                   )
                   do
                     rc <- B.all_ (BeamCommon.vehicleRegistrationCertificate BeamCommon.atlasDB)

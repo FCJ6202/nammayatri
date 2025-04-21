@@ -72,6 +72,7 @@ juspayPayoutWebhookHandler merchantShortId mbOpCity authData value = do
       let personId = Id payoutOrder.customerId
       payoutConfig <- CPC.findByCityIdAndVehicleCategory merchanOperatingCityId DV.AUTO_CATEGORY Nothing >>= fromMaybeM (PayoutConfigNotFound "AUTO_CATEGORY" merchanOperatingCityId.getId)
       unless (isPayoutStatusSuccess payoutOrder.status) do
+        personStats <- QPersonStats.findByPersonId personId >>= fromMaybeM (PersonStatsNotFound personId.getId)
         case payoutOrder.entityName of
           Just DPayment.METRO_BOOKING_CASHBACK -> do
             forM_ (listToMaybe =<< payoutOrder.entityIds) $ \bookingId -> do
@@ -81,24 +82,23 @@ juspayPayoutWebhookHandler merchantShortId mbOpCity authData value = do
                 callPayoutService payoutOrder payoutConfig
           Just DPayment.REFERRAL_AWARD_RIDE -> do
             when (isPayoutStatusSuccess payoutStatus) do
-              personStats <- QPersonStats.findByPersonId personId >>= fromMaybeM (PersonStatsNotFound personId.getId)
               QPersonStats.updateReferralAmountPaid (personStats.referralAmountPaid + payoutOrder.amount.amount) personId
             fork "Update Payout Status and Transactions for Referral Award" $ do
               callPayoutService payoutOrder payoutConfig
           Just DPayment.REFERRED_BY_AWARD -> do
             when (isPayoutStatusSuccess payoutStatus) do
-              QPersonStats.updateReferredByEarningsPayoutStatus (Just $ castOrderStatus payoutStatus) personId
+              QPersonStats.updateReferredByEarningsPayoutStatusAndAmountPaid (Just $ castOrderStatus payoutStatus) (personStats.referralAmountPaid + payoutOrder.amount.amount) personId
             fork "Update Payout Status and Transactions for ReferredBy Award" $ do
               callPayoutService payoutOrder payoutConfig
           Just DPayment.BACKLOG -> do
             when (isPayoutStatusSuccess payoutStatus) do
-              QPersonStats.updateBacklogPayoutStatus (Just $ castOrderStatus payoutStatus) personId
+              QPersonStats.updateBacklogStatusAndAmountPaid (Just $ castOrderStatus payoutStatus) (personStats.referralAmountPaid + payoutOrder.amount.amount) personId
             fork "Update Payout Status and Transactions for Backlog Referral Award" $ do
               callPayoutService payoutOrder payoutConfig
           Just DPayment.REFERRED_BY_AND_BACKLOG_AWARD -> do
             when (isPayoutStatusSuccess payoutStatus) do
               let mbStatus = Just $ castOrderStatus payoutStatus
-              QPersonStats.updateBacklogAndReferredByPayoutStatus mbStatus mbStatus personId
+              QPersonStats.updateBacklogAndReferredByPayoutStatusAndAmountPaid mbStatus mbStatus (personStats.referralAmountPaid + payoutOrder.amount.amount) personId
             fork "Update Payout Status and Transactions for Referred By And Backlog Award" $ do
               callPayoutService payoutOrder payoutConfig
           _ -> logTagError "Webhook Handler Error" $ "Unsupported Payout Entity:" <> show payoutOrder.entityName
@@ -110,7 +110,7 @@ juspayPayoutWebhookHandler merchantShortId mbOpCity authData value = do
     callPayoutService payoutOrder payoutConfig = do
       let personId = Id payoutOrder.customerId
       person <- B.runInReplica $ QPerson.findById personId >>= fromMaybeM (PersonDoesNotExist personId.getId)
-      let createPayoutOrderStatusReq = IPayout.PayoutOrderStatusReq {orderId = payoutOrder.orderId, mbExpand = payoutConfig.expand}
+      let createPayoutOrderStatusReq = IPayout.PayoutOrderStatusReq {orderId = payoutOrder.orderId, mbExpand = payoutConfig.expand, personId = Just $ getId personId}
           serviceName = DEMSC.PayoutService TPayout.Juspay
           createPayoutOrderStatusCall = Payout.payoutOrderStatus person.merchantId person.merchantOperatingCityId serviceName
       void $ DPayment.payoutStatusService (cast person.merchantId) (cast personId) createPayoutOrderStatusReq createPayoutOrderStatusCall

@@ -226,3 +226,33 @@ ALTER TABLE atlas_app.search_request ADD COLUMN destination_stop_code text ;
 
 ------- SQL updates -------
 
+
+
+
+------- SQL updates -------
+
+ALTER TABLE atlas_app.search_request ADD COLUMN all_journeys_loaded boolean ;
+
+
+------- SQL updates -------
+
+
+
+
+------- SQL updates -------
+
+
+
+
+------- SQL updates -------
+
+ALTER TABLE atlas_app.search_request ADD COLUMN vehicle_category text ;
+
+
+------- SQL updates -------
+
+
+
+
+------- SQL updates -------
+
